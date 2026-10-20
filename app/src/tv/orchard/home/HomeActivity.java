@@ -84,7 +84,9 @@ public class HomeActivity extends Activity {
         super.onCreate(savedInstanceState);
         Ui.init(this);
         bridge = new FireTvBridge(this);
-        applyDebugChannel(getIntent());              // before buildHome(): debug_card / debug_slow_anim are read there
+        // before buildHome(): debug_card / debug_slow_anim are read there. cold=true: the intent may be a REPLAYED task
+        // root intent (process death), so extras are honoured only with a fresh orchard.debug_nonce (DebugNonce).
+        applyDebugChannel(getIntent(), true);
         safe = bridge.evaluateLaunch(getIntent());   // records CATEGORY_HOME launches, sets safe_mode on a loop
         if (!safe) debugHooks(getIntent());
         View first;
@@ -151,6 +153,7 @@ public class HomeActivity extends Activity {
         overlay.addView(panel, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         seenEpoch = app.settingsEpoch();
+        app.setSettingsListener(this::onSettingsChangedLive);   // DebugReceiver changes reach a visible Home at once
 
         wallpaper = new Wallpaper(this);
         loadWallpaper();
@@ -997,14 +1000,23 @@ public class HomeActivity extends Activity {
     /**
      * SDK 30 blocks adb from the app's /sdcard/Android/data dir, so debug flags arrive as intent extras (DebugFlags):
      * --es orchard.debug "debug_card=banner;debug_motion=reduced", --ez orchard.debug_clear true. Only debug_* keys.
+     * cold (onCreate): Android replays an am-start intent as the task root intent after process death, so the extras
+     * apply only with a one-time --es orchard.debug_nonce differing from the last consumed one. Live (onNewIntent)
+     * deliveries are always fresh and need no nonce; a nonce on them is recorded so a later replay is refused.
      */
-    private void applyDebugChannel(Intent intent) {
+    private void applyDebugChannel(Intent intent, boolean cold) {
         if (intent == null) return;
         String spec = intent.getStringExtra(DebugFlags.EXTRA_SET);
         boolean clear = intent.getBooleanExtra(DebugFlags.EXTRA_CLEAR, false);
         if (spec == null && !clear) return;
         try {
             OrchardApp app = (OrchardApp) getApplication();
+            String nonce = intent.getStringExtra(DebugNonce.EXTRA);
+            if (cold) {
+                if (!DebugNonce.consume(app.state(), nonce)) return;
+            } else if (nonce != null) {
+                DebugNonce.consume(app.state(), nonce);
+            }
             // apply() saves, which moves Config's signature, so restoreState()'s refresh() would report "unchanged"
             // on a live instance (onNewIntent) and never rebind. Bump the epoch so the change is rebuilt.
             if (DebugFlags.apply(app.config(), spec, clear) > 0) app.bumpSettingsEpoch();
@@ -1022,7 +1034,7 @@ public class HomeActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        applyDebugChannel(intent);
+        applyDebugChannel(intent, false);
         if (bridge.evaluateLaunch(intent) && !safe) {
             recreate();                                           // loop detected while running: show safe mode
             return;
@@ -1041,6 +1053,12 @@ public class HomeActivity extends Activity {
             restoreState();
             wake();                                                  // undims anything left dim by onPause, re-arms timer
         }
+    }
+
+    /** DebugReceiver / other out-of-activity config change while Home is alive: re-read and rebuild now (main thread). */
+    private void onSettingsChangedLive() {
+        if (safe || root == null || released) return;                // a stopped Home rebuilds in onResume via the epoch
+        restoreState();
     }
 
     /** Cheap re-sync on resume / new intent: re-read config, rebuild only on change, restore focus + scroll. */
@@ -1164,6 +1182,7 @@ public class HomeActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        ((OrchardApp) getApplication()).setSettingsListener(null);
         if (catalog != null) catalog.close();
         super.onDestroy();
     }

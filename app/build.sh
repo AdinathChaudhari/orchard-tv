@@ -26,7 +26,7 @@ JAVAC=$JAVA_HOME/bin/javac
 [[ -x $JAVAC ]] || { echo "error: no javac in $JAVA_HOME" >&2; exit 1; }
 
 PKG=src/tv/orchard/home
-PURE=("$PKG/AccessibilityList.java" "$PKG/Config.java" "$PKG/CrashGuard.java" "$PKG/CatalogOrder.java" "$PKG/ColorMath.java" "$PKG/ShelfText.java" "$PKG/RedirectCheck.java" "$PKG/DebugFlags.java" "$PKG/KeyRules.java" "$PKG/HiddenRules.java")
+PURE=("$PKG/AccessibilityList.java" "$PKG/Config.java" "$PKG/CrashGuard.java" "$PKG/CatalogOrder.java" "$PKG/ColorMath.java" "$PKG/ShelfText.java" "$PKG/RedirectCheck.java" "$PKG/DebugFlags.java" "$PKG/DebugNonce.java" "$PKG/KeyRules.java" "$PKG/HiddenRules.java")
 
 mkdir -p "$OUT"
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/orchard-build.XXXXXX")

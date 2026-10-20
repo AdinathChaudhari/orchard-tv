@@ -9,6 +9,12 @@ import java.util.List;
  * /sdcard/Android/data/tv.orchard.home (ext_data_rw), so HomeActivity applies flags itself from intent extras:
  *   am start -n tv.orchard.home/.HomeActivity --es orchard.debug "debug_card=banner;debug_motion=reduced"
  *   am start -n tv.orchard.home/.HomeActivity --ez orchard.debug_clear true
+ * COLD START needs a one-time nonce (DebugNonce), because Android replays an am-start intent as the task root intent
+ * after process death and would re-apply the flags (debug_art=placeholder came back as letter plates that way):
+ *   am start -n tv.orchard.home/.HomeActivity --es orchard.debug "debug_art=placeholder" --es orchard.debug_nonce "$(date +%s)"
+ * Without a fresh orchard.debug_nonce, onCreate ignores the extras; onNewIntent (process already alive) applies them.
+ * The nonce-free live form is the shell broadcast (DebugReceiver), which never replays:
+ *   am broadcast -n tv.orchard.home/.DebugReceiver --es unset debug_art
  * Only keys starting with "debug_" are ever written or removed. crashguard_strip and every other setting key
  * are refused here, so the exported activity cannot be used to arm the crash-failsafe strip. debug_crash and crash_on_home are refused too.
  */

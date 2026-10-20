@@ -5,7 +5,7 @@ import java.io.File;
 import java.io.IOException;
 
 /** Runtime state in getFilesDir()/state.conf (same parser as Config). One instance per process (OrchardApp.state()). */
-public final class State {
+public final class State implements DebugNonce.Store {
     private final Config conf;
     private final File crashes;
 
@@ -16,6 +16,7 @@ public final class State {
     }
 
     public File crashesFile() { return crashes; }
+    @Override
     public String get(String key, String def) { return conf.get(key, def); }
     public int getInt(String key, int def) { return conf.getInt(key, def); }
 
@@ -29,6 +30,7 @@ public final class State {
     public void set(String key, String value) { conf.set(key, value); }
 
     /** set() + commit() in one call. */
+    @Override
     public void put(String key, String value) {
         conf.set(key, value);
         commit();

@@ -96,6 +96,14 @@ Home on Fire source and the Mac toolchain directly.
    the shell user is not in `ext_data_rw`: `ls`/`cat`/`echo >>` return Permission denied. Debug flags and the
    wallpaper drop therefore cannot go through the file. Use `am start --es orchard.debug "k=v;k=v"` (only
    `debug_*` keys) and `--ez orchard.debug_clear true`; `crashguard_strip` is refused on this channel.
+   **am start extras are replayed as the task root intent after process death.** A screenshot run started with
+   `--es orchard.debug "debug_art=placeholder"`; later another app's memory use killed Orchard, Android recreated
+   HomeActivity with the original root intent, and `onCreate` re-applied the flag: the user saw letter plates instead
+   of logos. Fix: `onCreate` applies extras only with a one-time `--es orchard.debug_nonce <value>` that differs from
+   the last consumed one (`DebugNonce`, stored in state.conf); `onNewIntent` (live delivery) needs none. The shell form
+   `am broadcast -n tv.orchard.home/.DebugReceiver --es set/unset ...` is never replayed, and now bumps the settings
+   epoch and notifies the live HomeActivity (`OrchardApp.notifySettingsChanged`) so `ArtCache.setPlaceholder` is
+   recomputed and tiles + shelf rebuild without a force-stop (before, the process kept drawing placeholders).
 2. **Full-width `ComposeShader` rects are GPU-bound on the Stick.** Four of them (wash, leak, two vignettes)
    under the Top Shelf measured Janky 97.9% on dock-row moves; skipping them gave 4.9%. Bake gradients into
    quarter-resolution bitmaps once and draw filtered bitmaps with only the paint alpha changing.

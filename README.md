@@ -141,9 +141,12 @@ Fire OS ignores third-party Home apps, so Orchard cannot be chosen as the defaul
 `--dry-run` prints the TV commands without running them. Last resort is Amazon's Settings > My Fire TV > Reset to Factory Defaults. Orchard's settings live in `orchard.conf`; debug flags go through the launch intent because Android 11 blocks adb from that folder:
 
 ```bash
-scripts/tv.sh 'am start -n tv.orchard.home/.HomeActivity --es orchard.debug "debug_card=banner;debug_motion=reduced"'
-scripts/tv.sh 'am start -n tv.orchard.home/.HomeActivity --ez orchard.debug_clear true'
+scripts/tv.sh 'am start -n tv.orchard.home/.HomeActivity --es orchard.debug "debug_card=banner;debug_motion=reduced" --es orchard.debug_nonce "$(date +%s)"'
+scripts/tv.sh 'am start -n tv.orchard.home/.HomeActivity --ez orchard.debug_clear true --es orchard.debug_nonce "$(date +%s)"'
+scripts/tv.sh 'am broadcast -n tv.orchard.home/.DebugReceiver --es unset debug_art'   # live, no nonce, applies at once
 ```
+
+The nonce is required on a cold start: Android replays `am start` extras as the task's root intent after the process dies, so Orchard ignores extras in `onCreate` unless the nonce is new. A broadcast is never replayed.
 
 ---
 
@@ -191,7 +194,7 @@ orchard-tv exists because these projects did the hard research first. Thank you.
 
 | Project | What it contributed | Licence |
 |---|---|---|
-| [Gathin23/tv-vibehack](https://github.com/Gathin23/tv-vibehack) (now cleanyourtv) | The adb client (`tools/adb/tv.py`, `b64push.py`), the Fire OS debloat list behind `config/debloat.txt`, and build ideas | MIT |
+| [Gathin23/cleanyourtv](https://github.com/Gathin23/cleanyourtv) (formerly tv-vibehack) | The adb client (`tools/adb/tv.py`, `b64push.py`), the Fire OS debloat list behind `config/debloat.txt`, and build ideas | MIT |
 | [humblemuzzu/dumbtv](https://github.com/humblemuzzu/dumbtv) | Permissionless launcher patterns (catalogue, config, `build.sh`), the background-restriction idea, and its GOTCHAS notes | MIT |
 | [toolicious/home-on-fire](https://github.com/toolicious/home-on-fire) | The Home-button redirect Orchard relies on; integrated as a separate app, never copied | GPLv3 |
 | [WB2024/firestrip](https://github.com/WB2024/firestrip) | The do-not-touch package list that shaped `config/never-disable.txt` | MIT |

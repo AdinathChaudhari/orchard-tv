@@ -50,7 +50,7 @@ scripts/launcher.sh status                               # read-only
 ## Gotchas (full list in docs/learnings.md)
 
 - `monkey` does not launch apps here; use `cmd package resolve-activity --brief` then `am start -n`.
-- adb cannot read `/sdcard/Android/data/<pkg>` on SDK 30; debug flags go in via `am start --es orchard.debug`.
+- adb cannot read `/sdcard/Android/data/<pkg>` on SDK 30; debug flags go in via `am start --es orchard.debug "k=v" --es orchard.debug_nonce "$(date +%s)"` (cold start needs a fresh nonce: `am start` extras are replayed as the task root intent after process death, and without the gate `debug_art=placeholder` came back as letter plates) or live via `am broadcast -n tv.orchard.home/.DebugReceiver --es set/unset ...` (no nonce, applies at once, never replayed).
 - No `RenderEffect` on API 30: blur a small bitmap once. Full-width shaders are GPU-bound on the Stick; bake gradients to bitmaps.
 - Home on Fire is GPLv3: integrate through its public service id, never copy its code.
 - Keep tile art 325x195 RGB_565; stop idle animations after 20 s.

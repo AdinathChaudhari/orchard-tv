@@ -8,6 +8,7 @@ public class OrchardApp extends Application {
     private ArtCache art;
     private Config config;
     private int settingsEpoch;
+    private Runnable settingsListener;
 
     @Override
     public void onCreate() {
@@ -22,6 +23,13 @@ public class OrchardApp extends Application {
     /** Main thread only. SettingsActivity bumps it after each save so HomeActivity rebuilds on resume. */
     public int settingsEpoch() { return settingsEpoch; }
     public void bumpSettingsEpoch() { settingsEpoch++; }
+    /** Main thread. Registered by HomeActivity; run by notifySettingsChanged(). */
+    public void setSettingsListener(Runnable r) { settingsListener = r; }
+    /** Bumps the epoch and tells a live HomeActivity to re-evaluate (ArtCache placeholder, tiles, shelf) without a restart. */
+    public void notifySettingsChanged() {
+        settingsEpoch++;
+        if (settingsListener != null) settingsListener.run();
+    }
     public ArtCache art() { return art; }
 
     /** One Config over orchard.conf, shared by HomeActivity and AppCatalog (lazy; main thread). */
