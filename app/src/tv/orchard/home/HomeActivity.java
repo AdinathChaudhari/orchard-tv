@@ -1004,7 +1004,10 @@ public class HomeActivity extends Activity {
         boolean clear = intent.getBooleanExtra(DebugFlags.EXTRA_CLEAR, false);
         if (spec == null && !clear) return;
         try {
-            DebugFlags.apply(((OrchardApp) getApplication()).config(), spec, clear);
+            OrchardApp app = (OrchardApp) getApplication();
+            // apply() saves, which moves Config's signature, so restoreState()'s refresh() would report "unchanged"
+            // on a live instance (onNewIntent) and never rebind. Bump the epoch so the change is rebuilt.
+            if (DebugFlags.apply(app.config(), spec, clear) > 0) app.bumpSettingsEpoch();
         } catch (java.io.IOException | RuntimeException e) {
             // flags stay as they were
         }

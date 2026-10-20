@@ -13,7 +13,7 @@
 #   reset-to-stock            strip Home on Fire's entry, open Amazon's home
 #   restore-home              put the snapshot's accessibility list back, press-Home equivalent
 #   restore-settings          animator scale, screensaver, deviceidle entry back to the snapshot
-#   factory-stock [--dry-run] typed gate "STOCK": reset-to-stock, restore-settings, uninstall Orchard
+#   factory-stock [--dry-run] typed gate "STOCK": reset-to-stock, restore-settings, detox.sh undo all, uninstall Orchard
 #   uninstall                 typed gate "UNINSTALL": pm uninstall tv.orchard.home
 #   shot [name]               screenshot into shots/<name>.png
 #   key KEY [KEY ...]         one `input keyevent` call
@@ -22,7 +22,7 @@
 # Every TV command goes through scripts/tv.sh, which honours TV_HOST / TV_PORT.
 # --dry-run (or DRY_RUN=1) prints the TV-changing commands of the reset subcommands instead of running
 # them; reads (settings get, dumpsys, ...) still run because they never change the TV.
-# Needs TV_HOST (env or .env at the repo root); see scripts/tv.sh. Backing out a debloat is out of scope here.
+# Needs TV_HOST (env or .env at the repo root); see scripts/tv.sh. Debloat, ad-blocking and DNS live in scripts/detox.sh; factory-stock calls its 'undo all'.
 set -eu
 
 SCRIPTS_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -292,12 +292,14 @@ cmd_uninstall() {
 cmd_factory_stock() {
   need_snap
   if [ "${DRY_RUN:-0}" != 1 ]; then
-    confirm STOCK "factory-stock: strip Home on Fire from the redirect list, restore snapshot settings (animation scale, screensaver, battery whitelist), uninstall Orchard. Logins are kept; Home on Fire stays installed. Anything else you changed on the Stick (disabled apps, DNS) is not touched." || return 1
+    confirm STOCK "factory-stock: strip Home on Fire from the redirect list, restore snapshot settings (animation scale, screensaver, battery whitelist), uninstall Orchard. Then run detox.sh undo all: re-enable disabled Amazon packages, ad settings, background limits, Private DNS. Logins are kept; Home on Fire stays installed." || return 1
   else
     printf '== dry run: nothing below is executed ==\n'
   fi
   cmd_reset_to_stock
   cmd_restore_settings
+  # detox.sh reads backup/detox-pre.txt when present, else documented stock defaults; DRY_RUN is inherited.
+  bash "$SCRIPTS_DIR/detox.sh" undo all || die "detox.sh undo all failed; Orchard was not uninstalled"
   tv_write "pm uninstall $PKG"
   cmd_status
 }

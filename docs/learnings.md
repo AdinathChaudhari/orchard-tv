@@ -3,7 +3,7 @@
 Things learned the hard way or verified while working on this Stick. Each entry has
 the cause and the rule to follow. Last updated 2026-10-19.
 
-Sources: the detox run (a private debloat project, not part of this repo), the 5 research
+Sources: the detox run (`scripts/detox.sh`, see [DETOX.md](DETOX.md)), the 5 research
 files in this folder, and the Opus plan review ([plan-review.md](plan-review.md)), which read the
 Home on Fire source and the Mac toolchain directly.
 

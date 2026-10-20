@@ -27,7 +27,9 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-Only the structure of app/build.sh was adapted from dumbtv/launcher/build.sh.
+Only the structure of app/build.sh was adapted from dumbtv/launcher/build.sh. The `background` layer of
+scripts/detox.sh (appops RUN_IN_BACKGROUND ignore for packages that cannot be disabled) is the same idea as
+dumbtv's background restriction; no dumbtv code was copied.
 
 
 ================================================================
@@ -57,6 +59,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ---
+
+config/debloat.txt starts from the Fire OS package list in tv-vibehack's examples (filtered, regrouped and
+extended by testing on a Fire TV Stick 4K Plus), and scripts/detox.sh follows the idea of its tools/disable.sh
+(one `pm disable-user --user 0` per listed package). Both are covered by the licence above.
 
 tools/adb/tv.py and tools/adb/b64push.py are adapted from tv-vibehack's
 tools/tv.py and tools/b64push.py (changes: adb key path and TV host

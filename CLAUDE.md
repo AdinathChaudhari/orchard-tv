@@ -1,17 +1,20 @@
 # orchard-tv
 
-Orchard (`tv.orchard.home`): an Apple TV-style home-screen launcher for a Fire TV Stick (Fire OS 8, API 30), plus the
-Mac tools to build it, install it and reset the Stick to Amazon's home. Public, MIT. Plain Java, no Gradle, no libraries.
-Scope is launcher + reset tools only; a debloat or DNS setup is not part of this repo.
+The whole Fire TV kit: a detox (ad blocking, tracking off, bloatware disabled, ad-blocking DNS; `scripts/detox.sh`) plus
+Orchard (`tv.orchard.home`), an Apple TV-style home-screen launcher for a Fire TV Stick (Fire OS 8, API 30), and the Mac
+tools to build it, install it and reset the Stick to Amazon's home. Public, MIT. Plain Java, no Gradle, no libraries.
 
 ## Layout
 
 - `app/` Android app. `src/tv/orchard/home/`, `res/`, `test/` (host tests), `build.sh`, `version.env`.
 - `tools/` `env.sh` (finds JDK 17+ and the SDK), `make_wallpapers.py` (Pillow/numpy), `subset_fonts.sh` (fonttools),
   `adb/` (`tv.py`, `b64push.py`, `requirements.txt`; adapted from tv-vibehack, MIT).
-- `scripts/` `launcher.sh` (build, install, status, reset), `tv.sh` (one adb shell command).
+- `scripts/` `detox.sh` (snapshot, privacy, screensaver, background, dns, debloat, updates, status, undo), `launcher.sh`
+  (build, install, status, reset), `tv.sh` (one adb shell command).
+- `config/` `debloat.txt` (packages to disable), `never-disable.txt` (refused on every disable path).
+- `tests/` `detox_guard_test.sh` (host-only: guard refusals, list intersection, fake-TV end to end).
 - `mockup/` HTML preview of the design. `real-art.js` must stay `false`; `banners-real/` is git-ignored and never committed.
-- `docs/` PLAN.md (historical spec), TESTING.md (scrubbed results), learnings.md, research/.
+- `docs/` DETOX.md (the detox guide), PLAN.md (historical spec), TESTING.md (scrubbed results), learnings.md, research/.
 
 ## Build, test, install
 
@@ -26,10 +29,20 @@ scripts/launcher.sh status                               # read-only
 `scripts/tv.sh` needs `TV_HOST` (env or `.env`); it has no default. The adb key is `ORCHARD_ADB_KEY` (default
 `~/.android/adbkey`). Use `tv.sh`, never a bare `adb connect` (a second key means a second "Allow" prompt).
 
+## Detox safety rules
+
+1. `--dry-run` first: `scripts/detox.sh all --dry-run` prints `would run: ...` and changes nothing. Reads still run.
+2. `config/never-disable.txt` is checked in `disable_pkg`, the only code path that runs `pm disable-user`. Never add a bypass; extend the list instead. `tests/detox_guard_test.sh` must pass (mutation-check any change to the guard).
+3. `snapshot` before the first write; `all` keeps an existing `backup/detox-pre.txt` (never overwrites it). `undo` restores from it, else from documented stock defaults.
+4. Typed gates: `debloat` DEBLOAT, `updates` UPDATES, `all` DETOX. `updates` is never part of `all` (risky both ways).
+5. Keep `config/debloat.txt` conservative (bootloop risk on Fire OS 8.1); add one package at a time and restart between.
+6. Disable, never uninstall, Amazon packages. `factory-stock` calls `detox.sh undo all`.
+7. The kit's own packages (`tv.orchard.home`, Home on Fire) are on the never-disable list.
+
 ## Reset safety rules
 
 1. Every TV change is preceded by `launcher.sh snapshot`; `restore-*` read only from `backup/orchard-pre.txt`. Never hard-code "restore to 1".
-2. `factory-stock` (type `STOCK`) = reset-to-stock + restore-settings + uninstall Orchard. `uninstall` (type `UNINSTALL`) = Orchard only. Both refuse without the typed word. Use `--dry-run` first.
+2. `factory-stock` (type `STOCK`) = reset-to-stock + restore-settings + `detox.sh undo all` + uninstall Orchard. `uninstall` (type `UNINSTALL`) = Orchard only. Both refuse without the typed word. Use `--dry-run` first.
 3. Never auto-uninstall on a failed check; failure handling only switches the redirect off.
 4. Never interfere with long-press Home (the escape to Amazon's home) or Home on Fire's long-press Menu.
 5. Claude Code blocks `pm grant` and `reboot` from workers: treat them as user gates.
@@ -45,7 +58,7 @@ scripts/launcher.sh status                               # read-only
 
 ## Public-repo rules
 
-No private IPs, absolute home paths, emails, adb keys, device snapshots (`backup/`), real app logos or raw device logs.
+No private IPs, absolute home paths, emails, adb keys, device snapshots (`backup/`), raw device logs, or real app logos outside `docs/media/screenshot-real-*.jpg` (the user approved real-app screenshots for the README on 2026-10-20; `mockup/banners-real/` stays git-ignored).
 Before every commit, grep the tree (not git-ignored dirs only) for private LAN IP addresses, home-directory paths, and email addresses.
 Use `/usr/bin/grep -rnI`; plain `grep` here skips git-ignored dirs.
 

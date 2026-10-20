@@ -1,0 +1,24 @@
+# Packages detox.sh refuses to disable, whatever any list says. Disabling these can leave a Fire TV on the boot
+# logo or without a working remote. One entry per line; `#` starts a comment; a trailing `.*` matches a prefix.
+
+# Home screen and shell
+com.amazon.tv.launcher
+com.amazon.firelauncher
+com.amazon.firehomestarter
+
+# Platform and input (remote, keyboard)
+com.amazon.platform
+amazon.fireos
+com.amazon.fireinputdevices
+
+# Android core
+android
+com.android.systemui
+com.android.settings
+com.android.providers.*
+com.android.shell
+com.android.bluetooth
+
+# The launcher kit itself: Orchard and the Home redirect app
+tv.orchard.home
+io.github.toolicious.homeonfire

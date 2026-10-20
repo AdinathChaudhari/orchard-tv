@@ -1,0 +1,55 @@
+# Fire TV debloat list: packages that `scripts/detox.sh debloat` disables (pm disable-user --user 0).
+# Disabled, never uninstalled: `scripts/detox.sh undo debloat` brings every one back.
+#
+# Tested on: Fire TV Stick 4K Plus, Fire OS 8 (Android 11). Other Fire OS 7/8 devices: run
+# `scripts/detox.sh status` first and expect packages that are absent (they are skipped).
+#
+# CONSERVATIVE on purpose. A Stick of this model on Fire OS 8.1 is reported to bootloop after aggressive
+# com.amazon disables, so launcher-adjacent providers, sync, setup (OOBE) and remote-config packages are left alone.
+# Kept on purpose: Alexa (voice button), casting (cast sink, DIAL, whisperplay, fling), Matter, live TV, bluetooth.
+# Anything on config/never-disable.txt is refused even if it is added here.
+# Fire OS refuses some of these as "protected package"; that is reported and harmless. Layer `background`
+# restricts the refused ones instead.
+# The firmware-update packages are NOT here; they live in the optional `updates` layer.
+# Format: one package per line, `#` starts a comment.
+
+# Telemetry, ACR, advertising ID
+com.amazon.tv.acr                      # Automatic Content Recognition (viewing habits)
+com.amazon.device.metrics
+com.amazon.client.metrics.api
+com.amazon.device.logmanager
+com.amazon.dp.logger
+com.amazon.perfcollection
+com.amazon.perfc
+com.amazon.wirelessmetrics.service
+com.amazon.device.crashmanager
+com.amazon.hybridadidservice           # advertising ID service
+com.amazon.privacypassservice
+com.fireos.usagestats.proxy
+
+# Ads & shopping
+com.amazon.ftvads.deeplinking          # may be protected on Fire OS; error is harmless
+com.amazon.sneakpeek
+com.amazon.shoptv.firetv.client        # Amazon Shopping on TV
+com.amazon.shoptv.client
+com.amazon.tv.csapp
+
+# Preloaded Amazon apps
+com.amazon.bueller.photos              # Amazon Photos
+com.amazon.bueller.music               # Amazon Music
+com.amazon.gamehub                     # Luna / GameHub
+com.amazon.minitv.android.app          # Amazon MiniTV
+com.amazon.tv.website_launcher
+com.amazon.tahoe                       # Amazon Kids
+com.amazon.cloud9                      # Silk browser service
+com.amazon.spiderpork
+
+# Tutorials, nags, cloud extras
+com.amazon.storm.lightning.tutorial
+com.amazon.tmm.tutorial
+com.amazon.tv.releasenotes
+com.amazon.uxnotification
+com.amazon.systemnotices
+com.amazon.tv.support
+com.amazon.wifilocker                  # saves Wi-Fi passwords to Amazon cloud
+com.amazon.ods.kindleconnect

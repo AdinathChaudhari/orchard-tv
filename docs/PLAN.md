@@ -1,9 +1,7 @@
 # Orchard — an Apple TV-style home for the Fire TV Stick 4K Plus
 
 > **Historical document.** This is the design and build plan written before Orchard existed, in the private repo where it
-> began. It mentions `undo.sh`, "detox", a debloat of the Stick and a second launcher; those belong to a separate local
-> project that is not part of this repository. In this repo, `scripts/launcher.sh factory-stock` resets the redirect,
-> restores the saved settings and uninstalls Orchard, and nothing more. TESTLOG.md references point to the unpublished raw log; see docs/TESTING.md for the summary.
+> began. It mentions `undo.sh`, "detox", a debloat of the Stick and a second launcher; the detox now lives in this repo as `scripts/detox.sh` (see docs/DETOX.md). `scripts/launcher.sh factory-stock` resets the redirect, restores the saved settings, runs `detox.sh undo all` and uninstalls Orchard. TESTLOG.md references point to the unpublished raw log; see docs/TESTING.md for the summary.
 
 
 
