@@ -1,0 +1,16 @@
+# signing key (updates must be signed with the same key: back both up outside the repo)
+app/build*/
+app/release.keystore
+app/.keypass
+# device-specific
+.env
+backup/
+shots/
+.venv/
+__pycache__/
+# real app art is never redistributed
+mockup/banners-real/
+# image-craft working files (house convention: private)
+docs/media/ABOUT-IMAGE.md
+docs/media/hero-glass.jpg
+.DS_Store

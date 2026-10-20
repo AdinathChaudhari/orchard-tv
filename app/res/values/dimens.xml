@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Design px on the 1920x1080 canvas, copied from mockup/tokens.css. Ui.java scales at runtime. -->
+<resources>
+    <dimen name="canvas_w">1920px</dimen>
+    <dimen name="canvas_h">1080px</dimen>
+    <dimen name="safe_x">80px</dimen>
+    <dimen name="safe_y">60px</dimen>
+    <dimen name="tile_w">260px</dimen>
+    <dimen name="tile_h">156px</dimen>
+    <dimen name="gutter">40px</dimen>
+    <dimen name="col_pitch">300px</dimen>
+    <dimen name="row_pitch">256px</dimen>
+    <dimen name="row_gap">100px</dimen>
+    <dimen name="tile_r">14px</dimen>
+    <dimen name="tile_pad">40px</dimen>
+    <dimen name="hero_art_w">560px</dimen>
+    <dimen name="hero_art_h">315px</dimen>
+    <dimen name="hero_art_r">22px</dimen>
+    <dimen name="hero_art_x">1280px</dimen>
+    <dimen name="hero_art_y">172px</dimen>
+    <dimen name="dock_band_y0">576px</dimen>
+    <dimen name="dock_band_r">32px</dimen>
+    <dimen name="dock_tile_y">600px</dimen>
+    <dimen name="panel_w">1000px</dimen>
+    <dimen name="panel_h">316px</dimen>
+    <dimen name="panel_r">32px</dimen>
+    <dimen name="panel_tile">200px</dimen>
+    <dimen name="sheet_w">880px</dimen>
+    <dimen name="sheet_r">36px</dimen>
+    <dimen name="btn_w">360px</dimen>
+    <dimen name="btn_h">88px</dimen>
+    <dimen name="btn_r">44px</dimen>
+    <dimen name="text_title2">57px</dimen>
+    <dimen name="text_headline">38px</dimen>
+    <dimen name="text_body">29px</dimen>
+    <dimen name="text_caption1">25px</dimen>
+    <dimen name="text_caption2">23px</dimen>
+</resources>

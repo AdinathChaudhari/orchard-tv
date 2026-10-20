@@ -1,0 +1,149 @@
+/* Orchard design tokens. Source of truth: PLAN.md Section 0 (Rev 3).
+   Every number is UNITLESS design px (1920x1080 canvas) or ms or a plain factor,
+   so it can be copied verbatim into Ui.java / dimens.xml. CSS turns it into a length
+   with calc(var(--x) * 1px). Colours are copied as-is. Dark only.
+   Rev 3 (premium pass): values marked [R3] changed or are new. */
+:root {
+  --tile-edge: rgba(255,255,255,.07);     /* static 1 px art edge on every tile, not a focus outline */
+  /* 0.2 canvas, safe area, grid (6 columns default) */
+  --canvas-w: 1920;  --canvas-h: 1080;
+  --safe-x: 80;      --safe-y: 60;
+  --cols: 6;
+  --tile-w: 260;     --tile-h: 156;      /* 5:3 */
+  --gutter: 40;
+  --col-pitch: 300;                       /* tile-w + gutter */
+  --row-gap: 100;
+  --row-pitch: 256;                       /* tile-h + row-gap */
+  --tile-r: 14;                           /* radius on the 260-wide tile */
+  --tile-pad: 40;                         /* padding around rows so scaled tiles never clip */
+
+  /* 0.3 home layout bands */
+  --strip-y0: 60;    --strip-y1: 110;
+  --hero-y0: 60;     --hero-y1: 580;
+  --hero-bleed-h: 600;  --hero-fade-h: 240;      /* [R3] backdrop solid to y 360, gone at 600 (above the dock band) */
+  --hero-art-w: 560; --hero-art-h: 315; --hero-art-r: 22;   /* [R3] was 640x360 r24: 1.75x of the 320x180 banner, lighter card */
+  --hero-art-x: 1280; --hero-art-y: 172;                      /* [R3] right edge stays at 1840, centre y 330 */
+  --hero-art-shadow-y: 32; --hero-art-shadow-blur: 72; --hero-art-shadow-alpha: 0.55;   /* [R3] deeper lift */
+  --hero-art-contact-y: 4; --hero-art-contact-blur: 12; --hero-art-contact-alpha: 0.45;  /* [R3] contact shadow */
+  --hero-glow-scale: 1.12; --hero-glow-y: 28; --hero-glow-alpha: 0.50; --hero-glow-flat-lum: 0.50; --hero-glow-flat-alpha: 0.25; --hero-glow-blur: 40; --hero-glow-sat: 1.3; /* [R3] pre-blurred banner behind the card; blur 40 design px = radius ~5 on the 240x135 bitmap (own bitmap, not the hero=blur one); sat = ColorMatrix at blur time */
+  /* [P4] shelf card = emblem plate (same numbers as Ui.HERO_EMBLEM_* on the device) */
+  --hero-emblem-lum-a: 0.34; --hero-emblem-lum-b: 0.12; --hero-emblem-halo-lum: 0.50; --hero-emblem-halo-alpha: 0.55;   /* [P4] */
+  --hero-emblem-icon: 168; --hero-emblem-icon-r: 38; --hero-emblem-icon-shadow-y: 14; --hero-emblem-icon-shadow-blur: 36; --hero-emblem-icon-shadow-alpha: 0.50; --hero-emblem-icon-edge-alpha: 0.35;   /* [P4] */
+  --hero-emblem-glow-alpha: 0.40; --hero-card-fade-in-ms: 150; --hero-title-max-w: 1100;   /* [P4] */
+  --hero-rim-top: 0.38; --hero-rim-bottom: 0.08;                                           /* [R3] 1 px specular rim, white alpha */
+  --hero-title-x: 80;  --hero-title-baseline: 330;
+  --hero-sub-baseline: 380;
+  --hero-sat-max: 0.70;                   /* [R3] cap on wash saturation (was 0.65) */
+  --hero-lum: 0.32;                       /* [R3] HSL lightness of the vivid colour at the wash origin (was 0.35) */
+  --hero-wash-x: 0.80; --hero-wash-y: 0.45; --hero-wash-rx: 0.62; --hero-wash-ry: 1.10; --hero-wash-mid: 0.38; --hero-wash-mid-lum: 0.14;   /* [R3] radial wash centred behind the card, as fractions of the band */
+  --hero-leak-alpha: 0.06;                /* [R3] white light leak, top-left */
+  --hero-bl-alpha: 0.35; --hero-bl-blur: 90;   /* ~radius 11 on its own 240x135 bitmap */
+  --hero-bl-sat: 1.35;        /* [R3] full-bleed pre-blurred banner (hero=blur) */
+  --hero-dim-left: 0.55; --hero-dim-right: 0.10; --hero-dim-bottom: 0.35; /* [R3] vignette for text legibility */
+  --hero-fade-ms: 280; --hero-debounce-ms: 120;
+  --dock-band-x0: 40; --dock-band-x1: 1880;   /* [R3.1] 16 px wider per side, so the focused first/last tile is not cramped */ --dock-band-y0: 576;
+  --dock-band-pad: 24;                    /* top pad; band height = pad + tile-h + pad-bottom = 196 at 6 cols (y 576..772) */
+  --dock-band-pad-bottom: 16;             /* leaves the scaled tile (bottom 765.4) inside and the label (top 781.4) clear below */
+  --dock-band-r: 32;
+  --dock-tile-y: 600;                     /* dock tile top; grid row k top = 600 + row-pitch*k */
+  --scroll-anchor-y: 600;                 /* focused DOCK row top lands here (dock row only; grid rows use --grid-anchor-y) */
+  --grid-anchor-y: 470; --scrim-solid-h: 120; --scrim-h: 190;   /* [P4] grid row r>=1 focused: its top lands at 470, so no dead band; status-strip scrim opaque to 120, clear at 190 */
+  --scroll-ms: 350;
+  --label-gap: 16;                        /* below the SCALED tile bottom */
+  --label-in-ms: 240; --label-rise: 8;    /* [R3] was 220 / 6 */
+
+  /* 0.4 tile art */
+  --tile-fallback-icon: 96;               /* icon-only apps: 96 px icon on a back plate */
+  --tile-fallback-icon-r: 22;             /* [R3] icon plate radius at 96 px */
+  --tile-fallback-lum-a: 0.26; --tile-fallback-lum-b: 0.09;   /* [R3] back plate gradient, top -> bottom (was .55/.25) */
+  --tile-fallback-halo-lum: 0.42; --tile-fallback-halo-alpha: 0.55;  /* [R3] soft radial halo top-left of the plate */
+  --tile-fallback-icon-lum-a: 0.58; --tile-fallback-icon-lum-b: 0.40; /* [R3] the icon's own gradient (placeholder only) */
+
+  /* 0.5 focus effect */
+  --focus-scale: 1.12;
+  --focus-in-ms: 240;  --focus-out-ms: 160;                     /* [R3] in was 220 */
+  --focus-in-ease: cubic-bezier(0.34, 1.25, 0.64, 1);         /* [R3] spring-like, ~3% overshoot: PathInterpolator(0.34,1.25,0.64,1) */
+  --focus-out-ease: cubic-bezier(0.55, 0, 1, 0.45);  /* ~ AccelerateInterpolator(1.2) */
+  --press-scale: 0.96; --press-ms: 80;
+  --shadow-y: 28; --shadow-blur: 56; --shadow-alpha: 0.48;     /* [R3] was 24/48/.40 */
+  --contact-y: 3; --contact-blur: 8; --contact-alpha: 0.40;    /* [R3] tight contact shadow under the focused tile */
+  --glow-blur: 96; --glow-alpha: 0.65; --glow-lum: 0.50; --glow-y: 12; --glow-dark-lum: 0.58; --glow-dark-alpha: 0.85;   /* [R3.1] ambient glow in the app's vivid colour (was .50 / .45) */
+  --focus-brightness: 1.03;               /* [R3.1] focused face lifts 3% */
+  --gloss-alpha: 0.14;                    /* diagonal 14% -> 0, top-left to centre [R3] was .16 */
+  --rim-top: 0.32; --rim-side: 0.10;      /* [R3] focused tile: 1 px specular rim, white alpha top / sides */
+  --sway-rot-y: 1.5;  --sway-rot-x: 1.0;  /* degrees */
+  --sway-period-ms: 6000; --sway-start-ms: 400;
+  --sway-max-cycles: 3; --sway-max-ms: 20000;
+  --sway-camera: 8000;
+  --idle-ms: 3000; --idle-alpha: 0.90; --idle-scale-add: 0.02;
+  --idle-fade-ms: 600;
+  --bump-px: 6; --bump-ms: 120;
+  --reduced-scale: 1.06; --reduced-fade-ms: 150;
+
+  /* 0.6 typography (Inter) */
+  --font: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --t-title2: 57;    --w-title2: 500;
+  --t-headline: 38;  --w-headline: 500;
+  --t-body: 29;      --w-body-label: 500;  --w-body-sub: 400;
+  --t-caption1: 25;  --w-caption1: 400;
+  --t-caption2: 23;  --w-caption2: 500;    /* nothing smaller */
+  --track-large: -0.02;                    /* em, at >= 48 px [R3] was -0.01 */
+  --track-mid: -0.01;                      /* em, 29..47 px [R3] new */
+  --track-small: 0.005;                    /* em, <= 25 px [R3] new */
+
+  /* 0.7 colour tokens */
+  --bg: #0B0B10;
+  --text: rgba(255,255,255,1);
+  --text2: rgba(255,255,255,0.62);
+  --text3: rgba(255,255,255,0.42);
+  --glass-thin: rgba(255,255,255,0.07);
+  --glass: rgba(255,255,255,0.12);
+  --glass-hairline: rgba(255,255,255,0.16);
+  --glass-thick: rgba(14,14,20,0.74);      /* [R3] panel / sheet fill, drawn over the pre-blurred wallpaper slice (was black 45%) */
+  --shadow: rgba(0,0,0,0.48);
+  --accent: #3D8BFF;                       /* toggles only, never focus */
+  --btn-focus-fill: #F2F2F7;
+  --btn-focus-text: #111111;
+
+  /* 0.8 glass (Liquid Glass stand-in: pre-blurred slice + fill + gradient rim + top refraction band) */
+  --glass-rim-hi: 0.34; --glass-rim-lo: 0.07;   /* [R3] 1 px rim: white alpha at the lit corner / the shaded corner */
+  --glass-rim-angle: 115;                       /* [R3] rim gradient direction, degrees */
+  --glass-top-edge: rgba(255,255,255,0.28);
+  --glass-inner-alpha: 0.10;               /* white 10% -> 0 over the top band [R3] was .12 / 40% */
+  --glass-inner-h: 0.45;
+  --glass-refract-h: 28; --glass-refract-alpha: 0.12;  /* [R3] bright band just inside the top edge */
+  --glass-blur: 48;                        /* [R3.1] = stack blur radius 6 on the 240x135 bitmap (48 design px); was 24 */
+  --glass-drop-y: 24; --glass-drop-blur: 60; --glass-drop-alpha: 0.35;  /* [R3] soft drop under glass panels */
+  --dock-fill: rgba(255,255,255,0.065);    /* [R3] was .10 */
+  --dock-edge-top: rgba(255,255,255,0.30); /* [R3] was .22 */
+  --dock-edge-bottom: rgba(255,255,255,0.06);
+  --strip-opacity-hint: 0.55;
+  --clock-opacity: 0.92;
+
+  /* 0.9 Quick Panel [R3] compact and centred: 1000 wide, hint line under the tiles */
+  --panel-x: 460; --panel-y: 60; --panel-w: 1000; --panel-h: 316; --panel-r: 32;
+  --panel-icon-top: 44; --panel-tile: 200; --panel-tile-r: 28; --panel-gap: 32; --panel-tile-x: 512; --panel-tile-y: 96;
+  --panel-hint-baseline: 356;             /* [R3] single Caption 2 line, centred */
+  --panel-in-ms: 260; --panel-out-ms: 200;
+  --panel-in-ease: cubic-bezier(0.22, 1.1, 0.36, 1);   /* [R3] PathInterpolator(0.22,1.1,0.36,1) */
+  --menu-max-tap-ms: 450; --menu-hoof-ms: 500;
+  --panel-focus-scale: 1.08;
+
+  /* 0.10 Reset confirm sheet */
+  --sheet-w: 880; --sheet-h-min: 420; --sheet-r: 36; --sheet-pad: 48;   /* [R3] radius 32 -> 36 */
+  --btn-w: 360; --btn-h: 88; --btn-r: 44; --btn-gap: 24;
+
+  /* settings list (mockup-only layout, kept here so Ui.java can copy it) */
+  --list-y: 150; --list-w: 880; --list-row-h: 76; --list-row-gap: 10; --list-row-r: 22;
+  --toggle-w: 76; --toggle-h: 44;
+
+  /* wallpaper vignette [R3]: baked into the wallpaper bitmap on device */
+  --wall-vignette-alpha: 0.40;
+  --wallpaper: "dusk";
+}
+:root[data-cols="5"] {
+  --cols: 5;
+  --tile-w: 320; --tile-h: 192;
+  --col-pitch: 360; --row-pitch: 292;
+  --tile-r: 17;
+}

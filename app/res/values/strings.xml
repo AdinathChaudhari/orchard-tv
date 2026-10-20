@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Orchard</string>
+    <string name="options_hint">&#8801; Options</string>
+    <string name="firetv_home">Fire TV Home</string>
+    <string name="return_to_firetv">Return to Fire TV</string>
+    <string name="safe_mode_title">Safe mode</string>
+    <string name="safe_try_again">Try Orchard again</string>
+    <string name="safe_reset_settings">Reset Orchard settings</string>
+    <string name="settings_title">Settings</string>
+    <string name="dream_name">Orchard Clock</string>
+</resources>
