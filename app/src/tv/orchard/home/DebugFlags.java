@@ -104,6 +104,53 @@ public final class DebugFlags {
         return cfg != null && ART_PLACEHOLDER.equals(cfg.get(Config.Keys.DEBUG_ART, "").trim().toLowerCase(java.util.Locale.ROOT));
     }
 
+    /** debug_time=HH:MM pins the clock (city-local minute of today, also the greeting); -1 when unset or bad. */
+    public static final String KEY_TIME = "debug_time";
+    /** debug_wx=clear|cloudy|rain|fog overrides the weather condition (WMO code); the real temperature stays. */
+    public static final String KEY_WX = "debug_wx";
+    /** debug_offline=1 behaves like a failed network: no fetch, cache treated as unusable, chip hidden. */
+    public static final String KEY_OFFLINE = "debug_offline";
+
+    public static int timeMinute(String v) {
+        if (v == null) return -1;
+        v = v.trim();
+        if (v.length() != 5 || v.charAt(2) != ':') return -1;
+        int h = digits(v.charAt(0), v.charAt(1)), m = digits(v.charAt(3), v.charAt(4));
+        if (h < 0 || h > 23 || m < 0 || m > 59) return -1;
+        return h * 60 + m;
+    }
+
+    private static int digits(char a, char b) {
+        if (a < '0' || a > '9' || b < '0' || b > '9') return -1;
+        return (a - '0') * 10 + (b - '0');
+    }
+
+    /** WMO code for a debug_wx value, or -1 when unset or unknown. */
+    public static int wxCode(String v) {
+        if (v == null) return -1;
+        switch (v.trim().toLowerCase(java.util.Locale.ROOT)) {
+            case "clear": return 0;
+            case "cloudy": return 3;
+            case "rain": return 63;
+            case "fog": return 45;
+            default: return -1;
+        }
+    }
+
+    /** Fixed rain chance (percent) shown under debug_wx=rain when no real probability exists. */
+    public static final int DEBUG_RAIN_PCT = 70;
+
+    /** Rain percentage for the chip under debug_wx: the real one when present (>= 0), else 70 while raining, else -1. */
+    public static int debugRainPct(boolean raining, int real) {
+        if (!raining) return -1;
+        return real >= 0 ? real : DEBUG_RAIN_PCT;
+    }
+
+    /** Day versus night from the (refraction-corrected) sun elevation in degrees: day when the sun is above the horizon. */
+    public static boolean isDayAtElevation(double elevationDeg) {
+        return elevationDeg > 0.0;
+    }
+
     private static boolean shellKey(String k) {
         return (k.startsWith(PREFIX) && k.length() > PREFIX.length())
             || k.equals(Config.Keys.CRASH_ON_HOME) || k.equals(Config.Keys.CRASHGUARD_STRIP);

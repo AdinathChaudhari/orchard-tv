@@ -1,0 +1,13 @@
+id,name,cc,lat,lon,tz,hi,lo,cond
+bengaluru,Bengaluru,IN,12.9716,77.5946,Asia/Kolkata,28,20,clear
+newdelhi,New Delhi,IN,28.6139,77.2090,Asia/Kolkata,31,19,clear
+mumbai,Mumbai,IN,19.0760,72.8777,Asia/Kolkata,33,25,clear
+pune,Pune,IN,18.5204,73.8567,Asia/Kolkata,31,20,cloud
+chennai,Chennai,IN,13.0827,80.2707,Asia/Kolkata,31,25,rain
+kolkata,Kolkata,IN,22.5726,88.3639,Asia/Kolkata,32,24,cloud
+hyderabad,Hyderabad,IN,17.3850,78.4867,Asia/Kolkata,31,21,clear
+dubai,Dubai,AE,25.2048,55.2708,Asia/Dubai,36,26,haze
+london,London,GB,51.5072,-0.1276,Europe/London,14,8,rain
+lisbon,Lisbon,PT,38.7223,-9.1393,Europe/Lisbon,22,14,clear
+newyork,New York,US,40.7128,-74.0060,America/New_York,16,9,cloud
+tokyo,Tokyo,JP,35.6762,139.6503,Asia/Tokyo,21,14,clear

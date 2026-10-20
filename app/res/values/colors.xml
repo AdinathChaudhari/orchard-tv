@@ -2,8 +2,8 @@
 <resources>
     <color name="bg">#FF0B0B10</color>
     <color name="text">#FFFFFFFF</color>
-    <color name="text2">#9EFFFFFF</color>
-    <color name="text3">#6BFFFFFF</color>
+    <color name="text2">#A8FFFFFF</color>
+    <color name="text3">#85FFFFFF</color>
     <color name="glass_thin">#12FFFFFF</color>
     <color name="glass">#1FFFFFFF</color>
     <color name="glass_thick">#BD0E0E14</color>
@@ -11,4 +11,6 @@
     <color name="accent">#FF3D8BFF</color>
     <color name="btn_focus_fill">#FFF2F2F7</color>
     <color name="btn_focus_text">#FF111111</color>
+    <color name="bg_light">#FFF4F1EC</color>
+    <color name="text_light">#FF1B1B1F</color>
 </resources>

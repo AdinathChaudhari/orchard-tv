@@ -12,7 +12,7 @@ import android.view.View;
  * (Ui.px(40) - pad(), Ui.px(576) - pad()) with size viewWidth() x viewHeight(). Not focusable.
  */
 public class DockBand extends View {
-    private final Glass glass = new Glass(Ui.DOCK_BAND_R, Ui.DOCK_FILL, Ui.DOCK_SLICE_ALPHA);
+    private final Glass glass = new Glass(Ui.DOCK_BAND_R, Theme.cur().dockFill, Ui.DOCK_SLICE_ALPHA);
     private final int[] loc = new int[2];
     private final int screenW, screenH;
     private Bitmap wallpaper;
@@ -37,6 +37,12 @@ public class DockBand extends View {
     }
     public static int viewWidth() { return bandWidth() + 2 * pad(); }
     public static int viewHeight() { return bandHeight() + 2 * pad(); }
+
+    /** Re-tints the band for Theme.cur() (dockFill; the edge highlights are not themed). Idempotent, ends with invalidate(). */
+    public void applyTheme() {
+        glass.applyTheme(Theme.cur().dockFill);
+        invalidate();
+    }
 
     /** The 240x135 pre-blurred wallpaper (Wallpaper.blurred()); null draws no slice. */
     public void setWallpaper(Bitmap blurred) {

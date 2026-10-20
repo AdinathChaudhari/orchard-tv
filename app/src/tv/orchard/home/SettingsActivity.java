@@ -28,8 +28,11 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Calendar;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
+import java.util.TimeZone;
 
 /**
  * Settings (PLAN 0.12 / mockup #settings): blurred wallpaper backdrop + dimmer, title and sub text on the left,
@@ -54,7 +57,8 @@ public class SettingsActivity extends Activity {
         }
     }
 
-    private static final int KIND_ROOT = 0, KIND_DOCK = 1, KIND_HIDDEN = 2;
+    private static final int KIND_ROOT = 0, KIND_DOCK = 1, KIND_HIDDEN = 2, KIND_CITY = 3;
+    private static final String CITY_SUB = "Not listed? On the Mac run scripts/launcher.sh city <lat> <lon> [label]";
     private static final String DOCK_SUB = "Up to 6 apps. Select adds or removes. Left and Right change the order.";
     private static final String HIDDEN_SUB =
         "Hidden apps leave the dock and the grid. System apps and Home on Fire are hidden by default; tick one to hide it, untick to show it.";
@@ -67,7 +71,10 @@ public class SettingsActivity extends Activity {
     private TextView titleView, subView;
     private SettingsList list;
     private AboutView about;
-    private Wallpaper wallpaper;
+    private AmbientState state = new AmbientState();
+    private int backdropGen;
+    private boolean started;
+    private ClockFace saver;
     private StatusStrip strip;
     private Bitmap blurKept;                  // the 240x135 blur, kept after Wallpaper.release() for backdrop + sheet
     private ConfirmSheet sheet;
@@ -87,7 +94,7 @@ public class SettingsActivity extends Activity {
         reduced = computeReducedMotion();
 
         root = new FrameLayout(this);
-        root.setBackgroundColor(Ui.BG);
+        root.setBackgroundColor(Theme.cur().bg);
         backdrop = new Backdrop(this);
         root.addView(backdrop, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT));
@@ -98,7 +105,7 @@ public class SettingsActivity extends Activity {
         strip.setClock24h(config.getBool(Config.Keys.CLOCK_24H, true));
         root.addView(strip, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, StatusStrip.viewHeight()));
 
-        titleView = text(Ui.T_TITLE2, Ui.medium(), Ui.TEXT);
+        titleView = text(Ui.T_TITLE2, Ui.medium(), Theme.cur().text);
         titleView.setLetterSpacing(Ui.tracking(Ui.T_TITLE2));
         FrameLayout.LayoutParams tl = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
             ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -106,7 +113,7 @@ public class SettingsActivity extends Activity {
         tl.topMargin = Ui.px(Ui.SETTINGS_TITLE_TOP);
         root.addView(titleView, tl);
 
-        subView = text(Ui.T_CAPTION1, Ui.regular(), Ui.TEXT3);
+        subView = text(Ui.T_CAPTION1, Ui.regular(), Theme.cur().text3);
         subView.setLetterSpacing(Ui.tracking(Ui.T_CAPTION1));
         subView.setLineSpacing(0f, 1.35f);
         FrameLayout.LayoutParams sl = new FrameLayout.LayoutParams(Ui.px(Ui.SETTINGS_SUB_W),
@@ -119,6 +126,12 @@ public class SettingsActivity extends Activity {
         int listH = Ui.CANVAS_H - Ui.LIST_Y - 60;                              // bottom at 1020
         list = new SettingsList(this);
         list.setReducedMotion(reduced);
+        list.setFocusListener((i, it) -> {
+            if (stack.isEmpty()) return;
+            Screen top = stack.get(stack.size() - 1);
+            if (top.items == null) return;
+            subView.setText(it.hint != null ? it.hint : top.sub);
+        });
         FrameLayout.LayoutParams ll = new FrameLayout.LayoutParams(SettingsList.viewWidth(),
             Ui.px(listH) + 2 * SettingsList.padY());
         ll.leftMargin = Ui.px(listX) - SettingsList.padX();
@@ -156,39 +169,59 @@ public class SettingsActivity extends Activity {
         strip.setClockVisible(config.getBool(Config.Keys.CLOCK, true));
         strip.setClock24h(config.getBool(Config.Keys.CLOCK_24H, true));
         strip.resume();
-        wallpaper = new Wallpaper(this);
-        loadBackdrop();
+        started = true;
+        refreshSky();
     }
 
     @Override
     protected void onStop() {
         super.onStop();
+        started = false;
+        backdropGen++;
+        dismissSaver();
         strip.pause();
         backdrop.set(null);
         blurKept = null;
-        if (wallpaper != null) wallpaper.release();
-        wallpaper = null;
     }
 
     // ---- backdrop -----------------------------------------------------------------------------------------------
 
+    /** Re-evaluate the ambient state (theme, sky, city), repaint the colours and rebuild the backdrop slice. */
+    private void refreshSky() {
+        state = Ambient.get(this).evaluate(System.currentTimeMillis(), false);
+        applyColors();
+        loadBackdrop();
+    }
+
     private void loadBackdrop() {
-        final Wallpaper w = wallpaper;
-        if (w == null) return;
-        w.load(config.get(Config.Keys.WALLPAPER, Ui.DEFAULT_WALLPAPER), loaded -> {
-            if (loaded != wallpaper) return;
-            Bitmap blur = loaded.blurred();         // read BEFORE release(): it nulls both bitmaps
-            loaded.release();                       // only the 240x135 blur is needed here
-            blurKept = blur;
-            backdrop.set(blur);
+        if (!started) return;
+        final int gen = ++backdropGen;
+        SkyAssets.slice(this, state, b -> {
+            if (gen != backdropGen || !started) return;
+            blurKept = b;
+            backdrop.set(b);
         });
+    }
+
+    /** No halo in Settings (the dimmer covers the sky): Theme.set(light, 0, 0), then recolour everything. */
+    private void applyColors() {
+        Theme.set(state.light, 0f, 0f);
+        Theme t = Theme.cur();
+        root.setBackgroundColor(t.bg);
+        backdrop.setDim(Theme.argb(state.sky ? Ui.SKY_DIMMER : Ui.SETTINGS_DIM_ALPHA, t.bg), t.bg);
+        titleView.setTextColor(t.text);
+        subView.setTextColor(t.text3);
+        about.applyTheme();
+        list.applyTheme();
+        strip.applyTheme();
     }
 
     private Bitmap blurredOrNull() { return blurKept; }
 
     /** The blurred wallpaper stretched full screen by the GPU (never upscaled into a bitmap) plus the dimmer. */
     private static final class Backdrop extends View {
-        private static final int DIM = Ui.argb(Ui.SETTINGS_DIM_ALPHA, 0x0B0B10);
+        private int dim = Ui.argb(Ui.SETTINGS_DIM_ALPHA, 0x0B0B10);
+        private int base = Ui.BG;
         private final Paint paint = new Paint(Paint.FILTER_BITMAP_FLAG);
         private final Rect src = new Rect();
         private final Rect dst = new Rect();
@@ -204,16 +237,22 @@ public class SettingsActivity extends Activity {
             invalidate();
         }
 
+        void setDim(int dimColor, int baseColor) {
+            dim = dimColor;
+            base = baseColor;
+            invalidate();
+        }
+
         @Override
         protected void onDraw(Canvas c) {
-            c.drawColor(Ui.BG);
+            c.drawColor(base);
             Bitmap b = bmp;
             if (b != null) {
                 src.set(0, 0, b.getWidth(), b.getHeight());
                 dst.set(0, 0, getWidth(), getHeight());
                 c.drawBitmap(b, src, dst, paint);
             }
-            c.drawColor(DIM);
+            c.drawColor(dim);
         }
     }
 
@@ -277,6 +316,30 @@ public class SettingsActivity extends Activity {
     private List<SettingsList.Item> rootItems() {
         ArrayList<SettingsList.Item> out = new ArrayList<SettingsList.Item>();
 
+        out.add(SettingsList.choice("Theme", new String[] {"auto", "light", "dark"},
+            new String[] {"Auto (sunset)", "Light", "Dark"},
+            () -> config.get(Config.Keys.THEME, "auto"),
+            v -> {
+                commit(Config.Keys.THEME, v);
+                refreshSky();
+            }));
+
+        out.add(SettingsList.toggle("Weather", () -> config.getBool(Config.Keys.WEATHER, true),
+            v -> commit(Config.Keys.WEATHER, v ? "on" : "off")));
+
+        CityCommand.Resolved city = Cities.current(this, config);
+        String cc = city.cc != null ? city.cc : Locale.getDefault().getCountry();
+        String auto = RainText.useF("auto", cc) ? "Auto (\u00b0F)" : "Auto (\u00b0C)";
+        out.add(SettingsList.choice("Units", new String[] {"auto", "c", "f"},
+            new String[] {auto, "\u00b0C", "\u00b0F"},
+            () -> config.get(Config.Keys.UNITS, "auto"),
+            v -> commit(Config.Keys.UNITS, v)));
+
+        out.add(SettingsList.action("City", city.name, this::openCity));
+
+        out.add(SettingsList.action("Screensaver", "Preview", this::startSaver)
+            .hint(getString(R.string.dream_hint)));
+
         out.add(SettingsList.action("Dock apps…", dockSummary(), () -> openPicker(KIND_DOCK)));
         out.add(SettingsList.action("Hidden apps…", catalog.hiddenPackages().size() + " hidden",
             () -> openPicker(KIND_HIDDEN)));
@@ -287,10 +350,10 @@ public class SettingsActivity extends Activity {
             v -> commit(Config.Keys.LABELS, v)));
 
         boolean user = Wallpaper.hasUserFile(this);
-        final String[] wallValues = user ? new String[] {"dusk", "ember", "fog", "black", "user"}
-            : new String[] {"dusk", "ember", "fog", "black"};
-        final String[] wallLabels = user ? new String[] {"Dusk", "Ember", "Fog", "Black", "Your file"}
-            : new String[] {"Dusk", "Ember", "Fog", "Black"};
+        final String[] wallValues = user ? new String[] {"sky", "dusk", "ember", "fog", "black", "user"}
+            : new String[] {"sky", "dusk", "ember", "fog", "black"};
+        final String[] wallLabels = user ? new String[] {"Sky", "Dusk", "Ember", "Fog", "Black", "Your file"}
+            : new String[] {"Sky", "Dusk", "Ember", "Fog", "Black"};
         final boolean userNow = user;
         out.add(SettingsList.choice("Wallpaper", wallValues, wallLabels,
             () -> {
@@ -300,7 +363,7 @@ public class SettingsActivity extends Activity {
             },
             v -> {
                 commit(Config.Keys.WALLPAPER, v);
-                loadBackdrop();
+                refreshSky();
             }));
 
         out.add(SettingsList.toggle("Reduced motion",
@@ -340,6 +403,98 @@ public class SettingsActivity extends Activity {
 
         out.add(SettingsList.action("About", "", this::pushAbout));
         return out;
+    }
+
+    // ---- City screen ------------------------------------------------------------------------------------------------
+
+    private void openCity() {
+        Screen s = new Screen("City", CITY_SUB, cityItems(), 0);
+        s.kind = KIND_CITY;
+        CityCommand.Resolved cur = Cities.current(this, config);
+        if (cur.id != null) {
+            List<CityCommand.City> all = Cities.all(this);
+            for (int i = 0; i < all.size(); i++) if (all.get(i).id.equals(cur.id)) s.focus = i;
+        }
+        saveFocus();
+        stack.add(s);
+        showCurrent();
+    }
+
+    /** 'Sunset HH:MM' for the city today in its own zone; 'Polar' when the sun does not set (or rise). */
+    private static String sunsetDetail(double lat, double lon, String tzId) {
+        TimeZone tz = tzId != null ? TimeZone.getTimeZone(tzId) : TimeZone.getDefault();
+        Calendar cal = Calendar.getInstance(tz);
+        cal.setTimeInMillis(System.currentTimeMillis());
+        int y = cal.get(Calendar.YEAR), m = cal.get(Calendar.MONTH) + 1, d = cal.get(Calendar.DAY_OF_MONTH);
+        Calendar noon = Calendar.getInstance(tz);
+        noon.clear();
+        noon.set(y, m - 1, d, 12, 0, 0);
+        double tzH = tz.getOffset(noon.getTimeInMillis()) / 3.6e6;
+        Solar.Times t = Solar.times(lat, lon, y, m, d, tzH);
+        if (Double.isNaN(t.set)) return "Polar";
+        return "Sunset " + RainText.hhmm(t.set);
+    }
+
+    private List<SettingsList.Item> cityItems() {
+        ArrayList<SettingsList.Item> out = new ArrayList<SettingsList.Item>();
+        final CityCommand.Resolved cur = Cities.current(this, config);
+        if (cur.id == null) {                                                       // a custom city: first, checked, Select = back
+            final String detail = sunsetDetail(cur.lat, cur.lon, cur.tz);
+            out.add(SettingsList.check(cur.name + " (custom)", () -> true, this::pop, () -> detail));
+        }
+        final List<CityCommand.City> all = Cities.all(this);
+        for (final CityCommand.City c : all) {
+            final boolean here = cur.id != null && cur.id.equals(c.id);
+            final String detail = sunsetDetail(c.lat, c.lon, c.tz);
+            out.add(SettingsList.check(c.name, () -> here, () -> pickCity(all, c), () -> detail));
+        }
+        return out;
+    }
+
+    private void pickCity(List<CityCommand.City> all, CityCommand.City c) {
+        Map<String, String> m = config.snapshot();
+        int r = CityCommand.apply(m, all, c.id, null, null, null);
+        if (r == 1) {
+            config.set(Config.Keys.CITY_ID, c.id);
+            config.remove(Config.Keys.CITY_LAT);
+            config.remove(Config.Keys.CITY_LON);
+            config.remove(Config.Keys.CITY_NAME);
+            config.remove(Config.Keys.CITY_TZ);
+            commit(Config.Keys.CITY_ID, c.id);
+            Ambient.get(this).settingsChanged();                                    // drops the old city's weather cache
+            refreshSky();
+        } else if (r < 0) {
+            list.bumpFocused();
+            return;
+        }
+        pop();
+    }
+
+    // ---- Screensaver preview ------------------------------------------------------------------------------------
+
+    private void startSaver() {
+        if (saver != null) return;
+        saver = new ClockFace(this);
+        saver.setReducedMotion(reduced);
+        root.addView(saver, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT));
+        saver.start();
+    }
+
+    private void dismissSaver() {
+        if (saver == null) return;
+        saver.stop();
+        root.removeView(saver);
+        saver = null;
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (saver != null) {                                                        // any key stops the preview and is consumed
+            if (event.getAction() == KeyEvent.ACTION_DOWN) dismissSaver();
+            return true;
+        }
+        return super.dispatchKeyEvent(event);
     }
 
     // ---- pickers (p5-2b) ------------------------------------------------------------------------------------------
@@ -530,6 +685,7 @@ public class SettingsActivity extends Activity {
     /** Scrollable text; UP / DOWN scroll 3/4 of a page per press (smooth unless reduced motion). */
     private static final class AboutView extends FrameLayout {
         private final ScrollView scroll;
+        private final TextView[] views = new TextView[4];
         private boolean reduced;
 
         AboutView(android.content.Context c, String version, String notices) {
@@ -544,17 +700,21 @@ public class SettingsActivity extends Activity {
             LinearLayout col = new LinearLayout(c);
             col.setOrientation(LinearLayout.VERTICAL);
             col.setPadding(0, 0, 0, Ui.px(120));
-            TextView v = styled(c, Ui.T_BODY, Ui.medium(), Ui.TEXT);
+            TextView v = styled(c, Ui.T_BODY, Ui.medium(), Theme.cur().text);
+            views[0] = v;
             v.setText(version);
             col.addView(v, lp(0));
-            TextView lic = styled(c, Ui.T_CAPTION1, Ui.regular(), Ui.TEXT2);
-            lic.setText("Orchard is MIT licensed. Inter: SIL Open Font License 1.1.");
+            TextView lic = styled(c, Ui.T_CAPTION1, Ui.regular(), Theme.cur().text2);
+            views[1] = lic;
+            lic.setText("Orchard is MIT licensed. Inter: SIL Open Font License 1.1.\n" + c.getString(R.string.weather_attribution));
             col.addView(lic, lp(28));
-            TextView cr = styled(c, Ui.T_CAPTION1, Ui.regular(), Ui.TEXT2);
+            TextView cr = styled(c, Ui.T_CAPTION1, Ui.regular(), Theme.cur().text2);
+            views[2] = cr;
             cr.setText("Credits: ideas and code patterns from tv-vibehack (MIT, Gathin) and dumbtv (MIT, dumbtv contributors). "
                 + "Works with Home on Fire (GPLv3); no code shared.");
             col.addView(cr, lp(20));
-            TextView nt = styled(c, Ui.T_CAPTION1, Ui.regular(), Ui.TEXT2);
+            TextView nt = styled(c, Ui.T_CAPTION1, Ui.regular(), Theme.cur().text2);
+            views[3] = nt;
             nt.setText(notices);
             col.addView(nt, lp(40));
             scroll.addView(col, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
@@ -580,6 +740,12 @@ public class SettingsActivity extends Activity {
             t.setLineSpacing(0f, 1.35f);
             t.setGravity(Gravity.START);
             return t;
+        }
+
+        void applyTheme() {
+            Theme t = Theme.cur();
+            views[0].setTextColor(t.text);
+            for (int i = 1; i < views.length; i++) views[i].setTextColor(t.text2);
         }
 
         void setReducedMotion(boolean r) { reduced = r; }

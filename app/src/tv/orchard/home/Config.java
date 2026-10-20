@@ -23,7 +23,15 @@ public final class Config {
         public static final String MOTION = "motion";                 // full | reduced
         public static final String CLOCK = "clock";                   // on | off
         public static final String CLOCK_24H = "clock_24h";           // on | off
-        public static final String WALLPAPER = "wallpaper";           // dusk | ember | fog | black | user
+        public static final String WALLPAPER = "wallpaper";           // sky | dusk | ember | fog | black | user (default sky)
+        public static final String THEME = "theme";                   // auto | light | dark (default auto)
+        public static final String WEATHER = "weather";               // on | off (default on)
+        public static final String UNITS = "units";                   // auto | c | f (default auto)
+        public static final String CITY_ID = "city_id";               // id from cities.csv (default bengaluru)
+        public static final String CITY_LAT = "city_lat";             // custom city latitude, '%.4f'
+        public static final String CITY_LON = "city_lon";             // custom city longitude, '%.4f'
+        public static final String CITY_NAME = "city_name";           // custom city label, max 24 chars
+        public static final String CITY_TZ = "city_tz";               // optional IANA id for a custom city; absent = the TV's own zone
         public static final String FIRETV_TILE = "firetv_tile";       // on | off (default on)
         public static final String LAUNCH_ANIM = "launch_anim";       // on | off (default on)
         public static final String HERO = "hero";                     // wash | blur

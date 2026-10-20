@@ -7,10 +7,8 @@ import android.graphics.Bitmap;
 import android.graphics.BlurMaskFilter;
 import android.graphics.Canvas;
 import android.graphics.Color;
-import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.RectF;
-import android.graphics.Shader;
 import android.util.DisplayMetrics;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -67,6 +65,7 @@ public class ConfirmSheet extends FrameLayout {
     private View restoreFocus;
     private ObjectAnimator bumpAnim;
     private Btn bumpBtn;
+    private Theme appliedTheme;
 
     public ConfirmSheet(Context c) {
         super(c);
@@ -76,7 +75,7 @@ public class ConfirmSheet extends FrameLayout {
         setClipChildren(false);
 
         veil = new View(c);
-        veil.setBackgroundColor(Color.BLACK);
+        veil.setBackgroundColor(Theme.cur().veil);
         veil.setAlpha(0f);
         addView(veil, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
 
@@ -85,9 +84,9 @@ public class ConfirmSheet extends FrameLayout {
         int pad = Glass.shadowPad();
         addView(card, new LayoutParams(Ui.px(Ui.SHEET_W) + 2 * pad, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
 
-        titleView = label(c, Ui.T_HEADLINE, true, Ui.TEXT);
-        bodyView = label(c, Ui.T_BODY, false, Ui.TEXT2);
-        keepsView = label(c, Ui.T_CAPTION1, false, Ui.TEXT3);
+        titleView = label(c, Ui.T_HEADLINE, true, Theme.cur().text);
+        bodyView = label(c, Ui.T_BODY, false, Theme.cur().text2);
+        keepsView = label(c, Ui.T_CAPTION1, false, Theme.cur().text3);
         card.addView(titleView, lp(0));
         card.addView(bodyView, lp(Ui.SHEET_TITLE_GAP));
         card.addView(keepsView, lp(Ui.SHEET_KEEPS_GAP));
@@ -102,6 +101,24 @@ public class ConfirmSheet extends FrameLayout {
         rlp.gravity = Gravity.CENTER_HORIZONTAL;
         rlp.topMargin = Ui.px(Ui.SHEET_BTN_TOP);
         card.addView(row, rlp);
+    }
+
+    /**
+     * Re-tints the veil, the thick-glass card, the texts and the buttons for Theme.cur() (colours change only here,
+     * never animated). Idempotent (early return on the same palette) and ends with invalidate(). The veil view alpha
+     * (SHEET_VEIL_ALPHA) is animated by playIn()/dismiss().
+     */
+    public void applyTheme() {
+        Theme t = Theme.cur();
+        if (t == appliedTheme) return;
+        appliedTheme = t;
+        veil.setBackgroundColor(t.veil);
+        titleView.setTextColor(t.text);
+        bodyView.setTextColor(t.text2);
+        keepsView.setTextColor(t.text3);
+        card.applyTheme();
+        for (Btn b : btns) b.applyTheme();
+        invalidate();
     }
 
     private static TextView label(Context c, int designPx, boolean medium, int color) {
@@ -218,7 +235,10 @@ public class ConfirmSheet extends FrameLayout {
             row.addView(list[i], l);
         }
         focus = 0;
-        for (int i = 0; i < list.length; i++) list[i].setFocused(i == 0, false);
+        for (int i = 0; i < list.length; i++) {
+            list[i].applyTheme();
+            list[i].setFocused(i == 0, false);
+        }
     }
 
     private void playIn() {
@@ -368,6 +388,7 @@ public class ConfirmSheet extends FrameLayout {
         s.onClosed = onClosed;
         s.restoreFocus = host.findFocus();
         s.setWallpaper(blurred);
+        s.applyTheme();
         host.addView(s, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT));
         return s;
@@ -457,7 +478,7 @@ public class ConfirmSheet extends FrameLayout {
      * the wallpaper slice is taken at the card's LAYOUT rect, so scale-in does not shift it.
      */
     private static final class Card extends LinearLayout {
-        private final Glass glass = new Glass(Ui.SHEET_R, Ui.GLASS_THICK, 1f);
+        private final Glass glass = new Glass(Ui.SHEET_R, Theme.cur().glassThick, 1f);
         private final int[] loc = new int[2];
         private final int screenW, screenH, pad;
         private Bitmap wallpaper;
@@ -479,6 +500,11 @@ public class ConfirmSheet extends FrameLayout {
 
         void setWallpaper(Bitmap b) {
             wallpaper = b;
+            invalidate();
+        }
+
+        void applyTheme() {
+            glass.applyTheme(Theme.cur().glassThick);
             invalidate();
         }
 
@@ -513,6 +539,7 @@ public class ConfirmSheet extends FrameLayout {
         private final int pad, w, h;
         private final Paint fillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint rimPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint outlinePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint shadowPaint = new Paint(Paint.FILTER_BITMAP_FLAG);
         private final Paint.FontMetrics fm = new Paint.FontMetrics();
@@ -521,6 +548,7 @@ public class ConfirmSheet extends FrameLayout {
         private final String text;
         private float radius, rimRadius, textY;
         private Bitmap shadow;
+        private Theme rimTheme;
         private float p;
         private boolean focused;
         private ValueAnimator colourAnim;
@@ -531,6 +559,7 @@ public class ConfirmSheet extends FrameLayout {
             pad = shadowPad();
             w = Ui.px(wDesign);
             h = Ui.px(Ui.BTN_H);
+            outlinePaint.setStyle(Paint.Style.STROKE);
             textPaint.setTypeface(Ui.medium());
             textPaint.setTextSize(Ui.px(Ui.T_BODY));
             textPaint.setLetterSpacing(Ui.tracking(Ui.T_BODY));
@@ -590,17 +619,20 @@ public class ConfirmSheet extends FrameLayout {
             rimRadius = Math.max(0f, radius - stroke / 2f);
             rimPaint.setStyle(Paint.Style.STROKE);
             rimPaint.setStrokeWidth(stroke);
-            double a = Math.toRadians(Ui.GLASS_RIM_ANGLE);
-            float dx = (float) Math.sin(a), dy = (float) -Math.cos(a);
-            float len = Math.abs(w * dx) + Math.abs(h * dy);
-            float cx = rect.centerX(), cy = rect.centerY();
-            int white = 0xFFFFFF;
-            rimPaint.setShader(new LinearGradient(cx - dx * len / 2f, cy - dy * len / 2f, cx + dx * len / 2f, cy + dy * len / 2f,
-                new int[] {Ui.argb(Ui.GLASS_RIM_HI, white), Ui.argb(Ui.GLASS_RIM_LO, white),
-                    Ui.argb(Ui.GLASS_RIM_LO, white), Ui.argb(Ui.GLASS_RIM_END, white)},
-                new float[] {0f, Ui.GLASS_RIM_MIDLO_STOP, Ui.GLASS_RIM_MIDHI_STOP, 1f}, Shader.TileMode.CLAMP));
+            rimTheme = null;
+            applyTheme();
             textY = rect.centerY() - (fm.ascent + fm.descent) / 2f;
             buildShadow();
+        }
+
+        /** Rebuilds the rim gradient for Theme.cur(); idempotent. */
+        void applyTheme() {
+            Theme t = Theme.cur();
+            if (t == rimTheme) return;
+            rimTheme = t;
+            if (rect.isEmpty()) return;                                // onSizeChanged applies it
+            rimPaint.setShader(Glass.rimShader(t, rect.centerX(), rect.centerY(), w, h));
+            invalidate();
         }
 
         private void buildShadow() {
@@ -614,7 +646,6 @@ public class ConfirmSheet extends FrameLayout {
             sp.setMaskFilter(new BlurMaskFilter(skiaRadius, BlurMaskFilter.Blur.NORMAL));
             float drop = Ui.pxf(BTN_SHADOW_Y);
             c.drawRoundRect(new RectF(pad, pad + drop, pad + w, pad + drop + h), radius, radius, sp);
-            shadowPaint.setColor(Ui.SHADOW);
         }
 
         private static int lerp(int a, int b, float t) {
@@ -626,17 +657,27 @@ public class ConfirmSheet extends FrameLayout {
 
         @Override
         protected void onDraw(Canvas c) {
+            Theme t = Theme.cur();
             if (p > Ui.DRAW_MIN_PROGRESS && shadow != null) {
-                shadowPaint.setAlpha(Math.round(Color.alpha(Ui.SHADOW) * p));
+                shadowPaint.setColor(t.shadow);
+                shadowPaint.setAlpha(Math.round(Color.alpha(t.shadow) * p));
                 c.drawBitmap(shadow, 0f, 0f, shadowPaint);
             }
-            fillPaint.setColor(lerp(Ui.GLASS, Ui.BTN_FOCUS_FILL, p));
+            // light: unfocused buttons keep a visible shape (mockup: rgba(27,27,31,.07) + 2 px inset ctl-outline)
+            fillPaint.setColor(lerp(t.light ? Theme.argb(.07f, 0x1B1B1F) : t.glass, t.btnFocusFill, p));
             c.drawRoundRect(rect, radius, radius, fillPaint);
+            if (t.light && p < 0.999f) {
+                float o = Math.max(2f, Ui.pxf(2));
+                outlinePaint.setStrokeWidth(o);
+                outlinePaint.setColor(Theme.argb(Color.alpha(t.ctlOutline) / 255f * (1f - p), t.ctlOutline));
+                c.drawRoundRect(rect.left + o / 2f, rect.top + o / 2f, rect.right - o / 2f, rect.bottom - o / 2f,
+                    Math.max(0f, radius - o / 2f), Math.max(0f, radius - o / 2f), outlinePaint);
+            }
             if (p < 0.999f) {
                 rimPaint.setAlpha(Math.round(255f * (1f - p)));
                 c.drawRoundRect(rimRect, rimRadius, rimRadius, rimPaint);
             }
-            textPaint.setColor(lerp(Ui.TEXT, Ui.BTN_FOCUS_TEXT, p));
+            textPaint.setColor(lerp(t.text, t.btnFocusText, p));
             c.drawText(text, rect.centerX(), textY, textPaint);
         }
 

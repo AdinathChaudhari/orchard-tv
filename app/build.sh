@@ -26,14 +26,22 @@ JAVAC=$JAVA_HOME/bin/javac
 [[ -x $JAVAC ]] || { echo "error: no javac in $JAVA_HOME" >&2; exit 1; }
 
 PKG=src/tv/orchard/home
-PURE=("$PKG/AccessibilityList.java" "$PKG/Config.java" "$PKG/CrashGuard.java" "$PKG/CatalogOrder.java" "$PKG/ColorMath.java" "$PKG/ShelfText.java" "$PKG/RedirectCheck.java" "$PKG/DebugFlags.java" "$PKG/DebugNonce.java" "$PKG/KeyRules.java" "$PKG/HiddenRules.java")
+# Pure-Java host-testable classes: every src file carrying the marker text "PURE JAVA" (bash 3.2 safe).
+PURE=()
+while IFS= read -r f; do PURE+=("$f"); done < <(grep -l 'PURE JAVA' "$PKG"/*.java | LC_ALL=C sort)
+for f in ${PURE[@]+"${PURE[@]}"}; do
+  if grep -q '^import android\.' "$f"; then
+    echo "error: $f is marked PURE JAVA but imports android.*" >&2; exit 1
+  fi
+done
 
 mkdir -p "$OUT"
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/orchard-build.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 
-# 0. host tests (pure-Java classes only: these three files must not import android.*)
+# 0. host tests: every class marked PURE JAVA is compiled with test/*Test.java and must not import android.*
 echo "== host tests"
+echo "host-test classpath: ${#PURE[@]} pure classes"
 mkdir -p "$OUT/test"
 rm -rf "$OUT/test"/*
 shopt -s nullglob
@@ -91,8 +99,8 @@ rm -f "$OUT/orchard.apk" "$OUT/orchard.apk.idsig"
   --v2-signing-enabled true --v3-signing-enabled true --out "$OUT/orchard.apk" "$WORK/aligned.apk"
 "$BT/apksigner" verify "$OUT/orchard.apk"
 
-perms=$("$BT/aapt2" dump permissions "$OUT/orchard.apk" | grep -c 'uses-permission' || true)
-"$BT/aapt2" dump permissions "$OUT/orchard.apk" | grep 'uses-permission' || true
-printf 'built %s  %s bytes  %s uses-permission entries\n' \
-  "$OUT/orchard.apk" "$(wc -c < "$OUT/orchard.apk" | tr -d ' ')" "$perms"
-[[ $perms -eq 1 ]] || { echo "error: expected exactly one uses-permission" >&2; exit 1; }
+PERMS=$("$BT/aapt2" dump permissions "$OUT/orchard.apk" | sed -n "s/^uses-permission.*name='\([^']*\)'.*/\1/p" | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')
+printf 'built %s  %s bytes  permissions: %s\n' \
+  "$OUT/orchard.apk" "$(wc -c < "$OUT/orchard.apk" | tr -d ' ')" "$PERMS"
+[[ $PERMS == "android.permission.INTERNET android.permission.WRITE_SECURE_SETTINGS" ]] || {
+  echo "error: expected exactly WRITE_SECURE_SETTINGS + INTERNET, got: $PERMS" >&2; exit 1; }

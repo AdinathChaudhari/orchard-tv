@@ -2,8 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="tv.orchard.home">
 
-    <!-- The only permission. Granted once from the Mac: scripts/launcher.sh grant -->
+    <!-- Two permissions. WRITE_SECURE_SETTINGS is granted once from the Mac (scripts/launcher.sh grant).
+         INTERNET is a normal install-time permission used only for one Open-Meteo forecast request
+         (https, at most every 30 min, none when Settings > Weather is off). -->
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
@@ -36,6 +39,7 @@
         android:icon="@drawable/icon"
         android:banner="@drawable/banner"
         android:allowBackup="false"
+        android:usesCleartextTraffic="false"
         android:hardwareAccelerated="true"
         android:theme="@style/OrchardTheme">
 
@@ -85,6 +89,7 @@
                 <action android:name="android.service.dreams.DreamService" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
+            <meta-data android:name="android.service.dream" android:resource="@xml/dream_info" />
         </service>
     </application>
 </manifest>

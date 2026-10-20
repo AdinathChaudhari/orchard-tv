@@ -2,9 +2,11 @@ package tv.orchard.home;
 
 import android.animation.ValueAnimator;
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.LinearGradient;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.RectF;
 import android.graphics.Shader;
 import android.view.View;
@@ -15,8 +17,8 @@ import java.util.Locale;
 
 /**
  * Fixed top overlay, full width x Ui.px(190): opaque-to-clear scrim (faded in while a grid row is focused),
- * "Options" hint, optional status chip, date + clock. Redraws only at minute changes and during the 250 ms
- * scrim fade. Not focusable. Place at the top of the screen with size (screen width) x viewHeight().
+ * "Options" hint, optional status chip, weather chip, greeting + date + clock. Redraws only at minute changes, on a
+ * setter that changed something, and during the 250 ms scrim fade. Not focusable. Place at the top of the screen with size (screen width) x viewHeight().
  */
 public class StatusStrip extends View {
     private static final int SCRIM_H = Ui.STRIP_VIEW_H, SCRIM_SOLID_H = Ui.STRIP_SCRIM_SOLID_H;
@@ -31,9 +33,16 @@ public class StatusStrip extends View {
     private final Paint chipText = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint datePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint clockPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint greetPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint tempPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint rainPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint hlPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint capPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint scratch = new Paint(Paint.ANTI_ALIAS_FLAG);       // Halo scratch
+    private final Paint bmpPaint = new Paint(Paint.FILTER_BITMAP_FLAG);
+    private final Path iconPath = new Path();
     private final RectF chipRect = new RectF();
     private final RectF chipRimRect = new RectF();
-    private final float[] icon = new float[12];
     private final ValueAnimator fade = ValueAnimator.ofFloat(0f, 1f);
     private final Date now = new Date();
     private final Runnable tick = this::onTick;
@@ -43,10 +52,22 @@ public class StatusStrip extends View {
     private boolean clock24 = true, clockVisible = true, attached, paused;
     private float scrimA;
     private boolean scrimOn;
-    private String chip, dateStr = "", clockStr = "";
+    private String chip, dateStr = "", clockStr = "", internalDate = "", dateOverride;
+    private String greeting;
+    private static final String DOT = "\u00b7";
+
+    // weather chip state
+    private boolean wxShown, wxHidden;
+    private int wxGlyph;
+    private String wxTemp = "", wxRain = "", wxHl = "", wxCap = "", wxCapDraw = "";
+    private int scrimRgb = Theme.cur().bg;
+    private Theme appliedTheme;
+    private float appliedTs = -1f, appliedTn = -1f;
 
     // layout (device px), computed outside onDraw
     private float hintX, hintBase, chipBase, chipRadius, dateX, clockX, clockBase;
+    private float greetX, dotX;
+    private float wxGlyphX, wxGlyphY, wxTempX, wxRainX, wxHlX, wxCapX, wxRow1Base, wxCapBase;
     private int laidOutWidth = -1;
 
     public StatusStrip(Context context) {
@@ -56,17 +77,22 @@ public class StatusStrip extends View {
         iconPaint.setStyle(Paint.Style.STROKE);
         iconPaint.setStrokeCap(Paint.Cap.ROUND);
         iconPaint.setStrokeWidth(stroke);
-        int hint = Ui.argb(Ui.STRIP_HINT_ALPHA, 0xFFFFFF);
-        iconPaint.setColor(hint);
-        text(hintPaint, Ui.T_CAPTION2, true, hint);
-        text(chipText, Ui.T_CAPTION2, true, Ui.TEXT);
-        text(datePaint, Ui.T_CAPTION1, false, Ui.TEXT2);
-        text(clockPaint, Ui.T_HEADLINE, true, Ui.argb(Ui.CLOCK_ALPHA, 0xFFFFFF));
+        text(hintPaint, Ui.T_CAPTION2, true, 0);
+        text(chipText, Ui.T_CAPTION2, true, 0);
+        text(datePaint, Ui.T_CAPTION1, false, 0);
+        text(greetPaint, Ui.T_CAPTION1, false, 0);
+        text(clockPaint, Ui.T_HEADLINE, true, 0);
         clockPaint.setFontFeatureSettings("tnum");
-        chipFill.setColor(Ui.GLASS);
+        text(tempPaint, Ui.T_HEADLINE, true, 0);
+        tempPaint.setFontFeatureSettings("tnum");
+        text(rainPaint, Ui.T_CAPTION1, true, 0);
+        rainPaint.setFontFeatureSettings("tnum");
+        text(hlPaint, Ui.T_CAPTION2, true, 0);
+        hlPaint.setFontFeatureSettings("tnum");
+        text(capPaint, Ui.T_CAPTION1, false, 0);
         chipRim.setStyle(Paint.Style.STROKE);
         chipRim.setStrokeWidth(Math.max(1f, Ui.pxf(1)));
-        chipRim.setColor(Ui.GLASS_HAIRLINE);
+        applyTheme();
         fade.addUpdateListener(a -> {
             scrimA = (Float) a.getAnimatedValue();
             invalidate();
@@ -124,6 +150,103 @@ public class StatusStrip extends View {
     public void setClockVisible(boolean visible) {
         if (visible == clockVisible) return;
         clockVisible = visible;
+        relayout();
+    }
+
+    /** Re-reads Theme (cur, ts, tn) into every colour; invalidates only when something actually changed. */
+    public void applyTheme() {
+        Theme t = Theme.cur();
+        float ts = Theme.ts(), tn = Theme.tn();
+        boolean changed = t != appliedTheme || Math.abs(ts - appliedTs) > 1e-3f || Math.abs(tn - appliedTn) > 1e-3f;
+        appliedTheme = t;
+        appliedTs = ts;
+        appliedTn = tn;
+        int hint = Theme.hint();
+        iconPaint.setColor(hint);
+        hintPaint.setColor(hint);
+        chipFill.setColor(t.glass);
+        chipRim.setColor(t.glassHairline);
+        chipText.setColor(t.text);
+        int t2 = Theme.rise(t.text2), tx = Theme.rise(t.text);
+        greetPaint.setColor(t2);
+        datePaint.setColor(t2);
+        clockPaint.setColor(Theme.clock());
+        tempPaint.setColor(tx);
+        rainPaint.setColor(tx);
+        hlPaint.setColor(t2);
+        capPaint.setColor(t2);
+        if (changed) invalidate();
+    }
+
+    private long pinnedMs = -1;
+
+    /** debug_time: show this instant instead of the real clock (pinned false restores real time). Re-lays out only on a change. */
+    public void setClockPin(long ms, boolean pinned) {
+        long v = pinned ? ms : -1;
+        if (v == pinnedMs) return;
+        pinnedMs = v;
+        if (refreshStrings()) relayout();
+    }
+
+    /** Greeting left of the date ("Good evening"); null or empty hides it (and its middle dot). */
+    public void setGreeting(String g) {
+        String v = (g == null || g.isEmpty()) ? null : g;
+        if (v == null ? greeting == null : v.equals(greeting)) return;
+        greeting = v;
+        relayout();
+    }
+
+    /** Replaces the internal date label; null restores the TV-local "EEE d MMM". */
+    public void setDate(String label) {
+        String v = (label == null || label.isEmpty()) ? null : label;
+        if (v == null ? dateOverride == null : v.equals(dateOverride)) return;
+        dateOverride = v;
+        dateStr = v != null ? v : internalDate;
+        relayout();
+    }
+
+    /** Weather chip content. glyph is a WeatherParse.GLYPH_*; rain, highLow and caption may be null or empty. */
+    public void setWeather(boolean shown, int glyph, String temp, String rain, String highLow, String caption) {
+        String t = temp == null ? "" : temp, r = rain == null ? "" : rain;
+        String h = highLow == null ? "" : highLow, c = caption == null ? "" : caption;
+        if (shown == wxShown && glyph == wxGlyph && t.equals(wxTemp) && r.equals(wxRain) && h.equals(wxHl)
+                && c.equals(wxCap)) return;
+        wxShown = shown;
+        wxGlyph = glyph;
+        wxTemp = t;
+        wxRain = r;
+        wxHl = h;
+        wxCap = c;
+        relayout();
+    }
+
+    /** Panel or sheet open: the chip is not drawn but keeps its layout, so nothing moves (CSS visibility:hidden). */
+    public void setWeatherHidden(boolean hidden) {
+        if (hidden == wxHidden) return;
+        wxHidden = hidden;
+        invalidate();
+    }
+
+    /** Scrim colour: flat rgb, opaque to STRIP_SCRIM_SOLID_H and clear at STRIP_VIEW_H. Rebuilt only on change. */
+    public void setScrimColour(int rgb) {
+        rgb &= 0xFFFFFF;
+        if (rgb == scrimRgb) return;
+        scrimRgb = rgb;
+        buildScrim(getHeight());
+        if (scrimA > 0f) invalidate();
+    }
+
+    private void buildScrim(int h) {
+        if (h <= 0) return;
+        int solid = 0xFF000000 | scrimRgb, clear = scrimRgb;
+        scrimPaint.setShader(new LinearGradient(0, 0, 0, h, new int[] { solid, solid, clear },
+                new float[] { 0f, SCRIM_SOLID_H / (float) SCRIM_H, 1f }, Shader.TileMode.CLAMP));
+    }
+
+    /** String or size changed: recompute positions now (not in onDraw) and redraw. */
+    private void relayout() {
+        laidOutWidth = -1;
+        if (getWidth() > 0) layout();
         invalidate();
     }
 
@@ -153,8 +276,10 @@ public class StatusStrip extends View {
 
     /** @return true when a string changed */
     private boolean refreshStrings() {
-        now.setTime(System.currentTimeMillis());
+        now.setTime(pinnedMs >= 0 ? pinnedMs : System.currentTimeMillis());
         String d = dateFmt.format(now), c = clockFmt.format(now);
+        internalDate = d;
+        if (dateOverride != null) d = dateOverride;
         boolean changed = !d.equals(dateStr) || !c.equals(clockStr);
         dateStr = d;
         clockStr = c;
@@ -170,8 +295,7 @@ public class StatusStrip extends View {
 
     private void onTick() {
         if (refreshStrings()) {
-            laidOutWidth = -1;
-            if (clockVisible) invalidate();
+            relayout();
         }
         schedule();
     }
@@ -204,9 +328,7 @@ public class StatusStrip extends View {
     @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
-        int bg = Ui.BG, clear = Ui.argb(0f, Ui.BG);
-        scrimPaint.setShader(new LinearGradient(0, 0, 0, h, new int[] { bg, bg, clear },
-                new float[] { 0f, SCRIM_SOLID_H / (float) SCRIM_H, 1f }, Shader.TileMode.CLAMP));
+        buildScrim(h);
         laidOutWidth = -1;
     }
 
@@ -219,12 +341,11 @@ public class StatusStrip extends View {
         float cy = Ui.pxf((Ui.STRIP_Y0 + Ui.STRIP_Y1) / 2f);
         float iconSize = Ui.pxf(ICON), k = iconSize / 24f;
         float ix = Ui.pxf(Ui.SAFE_X), iy = cy - iconSize / 2f;
+        iconPath.rewind();
         for (int i = 0; i < 3; i++) {                      // 'M4 7h16 M4 12h16 M4 17h16'
             float y = iy + (7 + 5 * i) * k;
-            icon[i * 4] = ix + 4 * k;
-            icon[i * 4 + 1] = y;
-            icon[i * 4 + 2] = ix + 20 * k;
-            icon[i * 4 + 3] = y;
+            iconPath.moveTo(ix + 4 * k, y);
+            iconPath.lineTo(ix + 20 * k, y);
         }
         hintX = ix + iconSize + Ui.pxf(ICON_GAP);
         hintBase = centredBase(hintPaint, cy);
@@ -242,11 +363,59 @@ public class StatusStrip extends View {
             chipBase = centredBase(chipText, cy);
         }
 
-        float right = Ui.pxf(Ui.CANVAS_W - Ui.SAFE_X);
+        float right = Ui.pxf(Ui.CANVAS_W - Ui.SAFE_X), gap = Ui.pxf(DATE_GAP);
         clockX = right - clockPaint.measureText(clockStr);
-        dateX = clockX - Ui.pxf(DATE_GAP) - datePaint.measureText(dateStr);
+        dateX = clockX - gap - datePaint.measureText(dateStr);
         clockBase = centredBase(clockPaint, cy);
+        float groupLeft = dateX;
+        if (greeting != null) {
+            dotX = dateX - gap - greetPaint.measureText(DOT);
+            greetX = dotX - gap - greetPaint.measureText(greeting);
+            groupLeft = greetX;
+        }
+
+        if (wxShown) layoutWeather(clockVisible ? groupLeft - Ui.pxf(Ui.WX_CLOCK_GAP) : right, cy);
         laidOutWidth = getWidth();
+    }
+
+    /** Chip = glyph | 14 | two-row text column, vertically centred on cy; its right edge is chipRight. */
+    private void layoutWeather(float chipRight, float cy) {
+        float tw = tempPaint.measureText(wxTemp), g16 = Ui.pxf(Ui.WX_TEMP_GAP);
+        float row1 = tw;
+        boolean rain = !wxRain.isEmpty(), hl = !wxHl.isEmpty();
+        float rainW = rain ? rainPaint.measureText(wxRain) : 0f, hlW = hl ? hlPaint.measureText(wxHl) : 0f;
+        if (rain) row1 += g16 + rainW;
+        if (hl) row1 += g16 + hlW;
+        wxCapDraw = ellipsize(wxCap, capPaint, Ui.pxf(Ui.WX_NAME_MAX_W));
+        float colW = Math.max(row1, capPaint.measureText(wxCapDraw));
+        float glyph = Ui.pxf(Ui.WX_GLYPH), gw = Ui.pxf(Ui.WX_GAP);
+        float left = chipRight - (glyph + gw + colW);
+        wxGlyphX = left;
+        wxGlyphY = cy - glyph / 2f;
+        float x = left + glyph + gw;
+        wxTempX = x;
+        wxRainX = x + tw + g16;
+        wxHlX = rain ? wxRainX + rainW + g16 : x + tw + g16;
+        wxCapX = x;
+        float lh1 = 1.1f * Ui.pxf(Ui.T_HEADLINE), lh2 = 1.2f * Ui.pxf(Ui.T_CAPTION1);
+        boolean cap = !wxCapDraw.isEmpty();
+        float colH = lh1 + (cap ? lh2 : 0f), top = cy - colH / 2f;
+        wxRow1Base = lineBase(tempPaint, top, lh1);
+        wxCapBase = lineBase(capPaint, top + lh1, lh2);
+    }
+
+    /** Baseline of text centred (CSS half-leading) in a line box of height lh whose top is at top. */
+    private static float lineBase(Paint p, float top, float lh) {
+        Paint.FontMetrics m = p.getFontMetrics();
+        return top + (lh - (m.descent - m.ascent)) / 2f - m.ascent;
+    }
+
+    private static String ellipsize(String s, Paint p, float maxW) {
+        if (s.isEmpty() || p.measureText(s) <= maxW) return s;
+        float ell = p.measureText("\u2026");
+        int n = p.breakText(s, true, Math.max(0f, maxW - ell), null);
+        while (n > 0 && s.charAt(n - 1) == ' ') n--;
+        return s.substring(0, n) + "\u2026";
     }
 
     @Override
@@ -257,17 +426,28 @@ public class StatusStrip extends View {
             canvas.drawRect(0, 0, getWidth(), getHeight(), scrimPaint);
         }
         if (hintVisible) {
-            canvas.drawLines(icon, iconPaint);
-            canvas.drawText("Options", hintX, hintBase, hintPaint);
+            Halo.drawPath(canvas, iconPath, iconPaint, scratch);
+            Halo.drawText(canvas, "Options", hintX, hintBase, hintPaint, scratch);
         }
         if (chip != null) {
             canvas.drawRoundRect(chipRect, chipRadius, chipRadius, chipFill);
             canvas.drawRoundRect(chipRimRect, chipRadius, chipRadius, chipRim);
-            canvas.drawText(chip, chipRect.left + Ui.pxf(CHIP_PAD_H), chipBase, chipText);
+            Halo.drawText(canvas, chip, chipRect.left + Ui.pxf(CHIP_PAD_H), chipBase, chipText, scratch);
+        }
+        if (wxShown && !wxHidden) {
+            canvas.drawBitmap(WxGlyph.get(wxGlyph), wxGlyphX, wxGlyphY, bmpPaint);
+            Halo.drawText(canvas, wxTemp, wxTempX, wxRow1Base, tempPaint, scratch);
+            if (!wxRain.isEmpty()) Halo.drawText(canvas, wxRain, wxRainX, wxRow1Base, rainPaint, scratch);
+            if (!wxHl.isEmpty()) Halo.drawText(canvas, wxHl, wxHlX, wxRow1Base, hlPaint, scratch);
+            if (!wxCapDraw.isEmpty()) Halo.drawText(canvas, wxCapDraw, wxCapX, wxCapBase, capPaint, scratch);
         }
         if (clockVisible) {
-            canvas.drawText(dateStr, dateX, clockBase, datePaint);
-            canvas.drawText(clockStr, clockX, clockBase, clockPaint);
+            if (greeting != null) {
+                Halo.drawText(canvas, greeting, greetX, clockBase, greetPaint, scratch);
+                Halo.drawText(canvas, DOT, dotX, clockBase, greetPaint, scratch);
+            }
+            Halo.drawText(canvas, dateStr, dateX, clockBase, datePaint, scratch);
+            Halo.drawText(canvas, clockStr, clockX, clockBase, clockPaint, scratch);
         }
     }
 }

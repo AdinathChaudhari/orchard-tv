@@ -1,7 +1,7 @@
 /* Orchard design tokens. Source of truth: PLAN.md Section 0 (Rev 3).
    Every number is UNITLESS design px (1920x1080 canvas) or ms or a plain factor,
    so it can be copied verbatim into Ui.java / dimens.xml. CSS turns it into a length
-   with calc(var(--x) * 1px). Colours are copied as-is. Dark only.
+   with calc(var(--x) * 1px). Colours are copied as-is. Dark default, light via [data-theme=light] (Rev 4, bottom of file).
    Rev 3 (premium pass): values marked [R3] changed or are new. */
 :root {
   --tile-edge: rgba(255,255,255,.07);     /* static 1 px art edge on every tile, not a focus outline */
@@ -94,8 +94,9 @@
   /* 0.7 colour tokens */
   --bg: #0B0B10;
   --text: rgba(255,255,255,1);
-  --text2: rgba(255,255,255,0.62);
-  --text3: rgba(255,255,255,0.42);
+  --text-hi: #FFFFFF;                /* Rev 6 fix round: the text colour at the dawn / dusk flip (tn = 1): full alpha, and in the light set a deeper near-black than --text. At the flip the sky is mid-luminance and every ratio counts; this collapses the narrow band where neither set reads */
+  --text2: rgba(255,255,255,0.66);
+  --text3: rgba(255,255,255,0.52);   /* Rev 6: was .42, which is 4.1:1 on the flat bg and failed 4.5:1 on the dark sky */
   --glass-thin: rgba(255,255,255,0.07);
   --glass: rgba(255,255,255,0.12);
   --glass-hairline: rgba(255,255,255,0.16);
@@ -117,7 +118,7 @@
   --dock-fill: rgba(255,255,255,0.065);    /* [R3] was .10 */
   --dock-edge-top: rgba(255,255,255,0.30); /* [R3] was .22 */
   --dock-edge-bottom: rgba(255,255,255,0.06);
-  --strip-opacity-hint: 0.55;
+  --strip-opacity-hint: 0.85;   /* Rev 6 fix round: was .55 / .78 first try, 2.7:1 on a fogged dusk sky once the grid's second row is focused (the opaque status-strip scrim then shows the bare sky, not the dark hero backdrop) */
   --clock-opacity: 0.92;
 
   /* 0.9 Quick Panel [R3] compact and centred: 1000 wide, hint line under the tiles */
@@ -137,6 +138,118 @@
   --list-y: 150; --list-w: 880; --list-row-h: 76; --list-row-gap: 10; --list-row-r: 22;
   --toggle-w: 76; --toggle-h: 44;
 
+  /* ===== Rev 4: theme engine, light theme, weather chip (every new number lives here) ===== */
+  /* 4.1 sun phases, minutes relative to today's sunrise / sunset (NOAA, computed on the device) */
+  --dawn-start: -15;  --dawn-len: 30;        /* night -> day cross-fade centred on sunrise: sunrise-15 .. sunrise+15 */
+  --dusk-start: -15;  --dusk-len: 30;        /* day -> night cross-fade centred on sunset: sunset-15 .. sunset+15 */
+  --golden-len: 45;   --golden-ramp: 15;     /* warm tint over the last 45 min before sunset, full strength after 15 min of ramp */
+  --golden-fade: 25;                         /* from the start of the dusk cross-fade the tint falls to 0 over 25 min (gone at sunset+10) */
+  --theme-flip-at: 0.43;                     /* token set flips when the eased cross-fade passes this: mid-fade, where neither set reads on the bare blend; a glyph halo (text-shadow 0 0 16px in the current --bg, alpha bump of p capped at 0.4, see mock.js --ts) keeps every text box >= 4.5:1 through dawn/dusk (tools/check_contrast.py) */
+  --theme-fade-ms: 900;                      /* alpha fade when the user changes Theme or the clock jumps (T key / slider) */
+  --theme-hero-fade-ms: 1500;                /* user-initiated Theme change only: the shelf card layer cross-fades old -> new (the backdrop itself follows p) */
+  --theme-flip-ms: 0;                        /* colour tokens switch instantly at the flip (no colour animation on device); the wallpaper cross-fade carries it */
+  --theme-tick-s: 30;                        /* device: re-evaluate the phase every 30 s (and on boot / city change / date change) */
+  --time-default: 1302;                      /* mockup only: simulated clock when no ?time= (21:42, the static strip clock) */
+  --golden-a1: 0.50; --golden-a2: 0.20;      /* warm overlay: low-left radial / top wash alpha */
+  --golden-rgb1: 255,146,62; --golden-rgb2: 255,206,140;
+  --day-vignette-alpha: 0.10; --day-vignette-rgb: 92,84,76;
+  --tw-peak: 0.90;                           /* Rev 5: dusk-palette layer alpha = tw-peak * 4p(1-p) (0 at both ends of the cross-fade) */
+  --tw-top: 92,86,170; --tw-mid: 196,116,152; --tw-low: 244,170,116; --tw-glow: 255,150,90; --tw-glow-a: 0.45;
+  --hero-tw-cut: 0.85;                       /* Rev 5b: shelf-backdrop alpha multiplier = 1 - cut * 4p(1-p): the dusk wallpaper shows through the hero band mid-fade */
+  --wall-night-rgb: 11,11,16;                /* the night wallpaper's own vignette colour (does not follow the theme) */
+  --drop-rgb: 0,0,0;                         /* shadow tint (rgb triplet): black on dark, warm brown on light */
+  --veil: #000;  --tog-off: rgba(255,255,255,.22);  --title-shadow: rgba(0,0,0,.35);
+  --fth-fill-a: rgba(255,255,255,.11); --fth-fill-b: rgba(255,255,255,.04); --fth-ink: rgba(255,255,255,.92);
+  --glass-outline: rgba(0,0,0,0);            /* 1 px outer hairline on glass; only the light theme draws it */
+
+  /* 4.2 weather chip (status strip). Row 1 = glyph + temperature (Headline), row 2 = Caption */
+  --wx-glyph: 44; --wx-gap: 14; --wx-temp-gap: 16; --wx-name-max-w: 420; --wx-clock-gap: 56; --wx-hl-opacity: 1;
+  --wx-sun: #FFB21E; --wx-sun-core: #FFD36A; --wx-moon: #E9E6FF; --wx-cloud: #DCE2EE; --wx-cloud-edge: rgba(255,255,255,.0);
+  --wx-rain: #5FA8FF; --wx-haze: rgba(255,255,255,.72);
+  --wx-hl-ms: 200;                           /* chip fade in/out */
+  --wx-refresh-min: 30; --wx-stale-min: 180; /* device: refetch at most every 30 min; hide the chip when the cache is older than 3 h */
+
+  /* 4.3 settings list scroll (15 rows no longer fit 1080) */
+  --list-view-h: 860; --list-fade: 36; --list-scroll-ms: 220;
+
+  /* ===== Rev 5: screensaver (ClockDream). Every number the DreamService needs ===== */
+  --dream-cell: 0.6484; --dream-colon-cell: 0.2686; --dream-nudge: -0.031;   /* Rev 5b: fixed digit / colon cell widths in em (Inter tabular advances 1328 and 550 of 2048) */
+  --dream-digit-h: 560;                      /* ink height of the digits (cap height) in design px; font-size = this / .727 (Inter cap height) */
+  --dream-track: -0.125;                     /* digit letter-spacing in em (thin figures are wide; tightened so the group sits inside the 1920 canvas) */
+  --dream-fg: 0.85;                          /* digits alpha on pure black */
+  --dream-line-size: 44; --dream-line-gap: 64; --dream-line-a: 0.56; --dream-line-track: 0.03;   /* the one small line under the digits */
+  --dream-lift: 24;                          /* optical centre: group centre sits this far above the canvas middle */
+  --dream-shift-box: 24;                     /* burn-in guard: offsets stay inside a 24 x 24 px box (+-12), a new one every minute */
+  --dream-dim: 0.40; --dream-dim-min: 10;    /* after 10 min the group dims to 40 % alpha */
+
+  /* ===== Rev 6: time-of-day sky + rain. Every number the device needs (PLAN section 9) ===== */
+  /* 6.1 keyframe cross-fade windows, solar elevation in degrees (NOAA, refraction-corrected). A window is the pair (from-keyframe fully on, to-keyframe fully on); the fraction between is smoothstep((e - a)/(b - a)), so the
+     same formula serves a rising sun (a < b) and a setting one (a > b). Outside the windows the keyframe simply holds. The two windows around the Rev 4 theme flip (dawn>morning, golden>sunset, flip at e ~ -0.9) are narrow ON PURPOSE:
+     the UI text colour flips there, so the sky changes between a dark and a light keyframe in about 3.5 minutes instead of drifting through mid-grey for half an hour. */
+  --sky-nd-a: -16;  --sky-nd-b: -7;      /* rising : night > dawn */
+  --sky-ds-a: -6.4;  --sky-ds-b: -2.41;    /* rising : dawn > sunrise (the mirrored `horizon` hand-over frame, dark enough for white text) */
+  --sky-sm-a: -1.37; --sky-sm-b: 0.03;    /* rising : sunrise > morning, ~3.5 min (fix round 2; was 14 min). Placed (measured on the rendered UI, every weather) so the top band is light enough for dark text at the first light-theme minute (06:10) and still dark enough for white text at the last dark one (06:09). A wider window leaves both minutes mid-luminance: the sky then moves too little between them for either text colour to clear 4.6:1 in cloud and rain */
+  --sky-mn-a: 8;    --sky-mn-b: 45;      /* rising : morning > noon */
+  --sky-na-a: 45;   --sky-na-b: 22;      /* setting: noon > afternoon */
+  --sky-ag-a: 14;   --sky-ag-b: 6;       /* setting: afternoon > golden */
+  --sky-gs-a: -0.07; --sky-gs-b: -1.47;   /* setting: golden > horizon, ~3.5 min, placed the same way (17:59 dark text on the golden side, 18:00 white text on the horizon side) */
+  --sky-gt-a: -2.48; --sky-gt-b: -4.85;   /* setting: horizon > sunset (white text from here on) */
+  --sky-sd-a: -5;   --sky-sd-b: -10;     /* setting: sunset > dusk */
+  --sky-dn-a: -12;  --sky-dn-b: -17;     /* setting: dusk > night */
+  --sky-day-k-ref: 50;                   /* windows above 3 deg are scaled by min(1, today's max elevation / 50) so a low-sun city (London in winter) still reaches noon */
+  --sky-fade-ms: 900;                    /* alpha fade when the clock jumps (T key / slider); live minutes move by tiny steps */
+  /* 6.2 sun / moon glow (one pre-rendered tile each, transform + alpha only) */
+  --glow-sun-size: 720; --glow-sun-a: 0.60; --glow-sun-e0: -1.5; --glow-sun-e1: 5;      /* alpha ramps 0 at e0 to full at e1 */
+  --glow-moon-size: 360; --glow-moon-a: 0.90; --glow-moon-e0: -4; --glow-moon-e1: -12;  /* alpha ramps in as the sun sinks past -4, full at -12 */
+  --glow-x0: 0.08; --glow-x1: 0.92;      /* azimuth east .. west maps to this canvas fraction (through the equator-ward side) */
+  --glow-sun-y-top: 0.12; --glow-sun-y-low: 1.00;   /* sun centre y: horizon (e = 0) at 100 % of the height, e >= 70 at 12 % */
+  --glow-moon-y0: 0.52; --glow-moon-y1: 0.46;       /* moon arc: y at the ends of the night and at its middle. The home backdrop hides the sky above y ~360 (solid) .. 600 (gone), so the moon sits in the band just above the dock where the sky shows through, clear of the shelf title (y < 400) and the hero card (x > 1280) */
+  --glow-moon-x0: 0.28; --glow-moon-x1: 0.66;       /* moon arc: x at dusk (east) and at dawn (west); stays in the free band between the shelf title and the hero card */
+  /* 6.3 weather tint (pre-rendered overcast step per keyframe, alpha cross-fade; rain adds a dim; fog a veil) */
+  --wx-oc-cloud: 1; --wx-oc-rain: 1; --wx-oc-fog: 0.30;     /* alpha of the overcast layer set per condition */
+  --sky-dimmer: 0.70;                                        /* Settings / City dimmer over the sky (bg colour alpha); the static walls keep the Rev 4 .55 */
+  --wx-rain-day: 96,110,136; --wx-rain-day-a: 0.20;             /* rain by day: slate veil, alpha x smooth((p - flip)/(1 - flip)): 0 at the theme flip, full by day */
+  --wx-rain-dim: 0.01;                                       /* black over the sky while raining */
+  --wx-fog-day: 255,255,255; --wx-fog-day-a: 0.42; --wx-fog-night: 128,138,166; --wx-fog-night-a: 0.14;   /* soft veil, a colour per theme (the night one stays dark enough for white text) */
+  --wx-glow-cloud: 0.35; --wx-glow-fog: 0.45; --wx-glow-rain: 0; /* sun/moon glow multiplier per condition (clear = 1) */
+  /* 6.4 rain drops: ONE pre-rendered tile layer translated down. Only while it is raining now. */
+  --rain-tile: 384; --rain-alpha: 0.25; --rain-speed: 260;   /* px, layer alpha, px per second (the loop is 384 / 260 = 1.48 s) */
+  --rain-contrast-l: .20; --rain-alpha-l-max: .55;           /* light sky: streak alpha = clamp(contrast / (sky luma - .305), rain-alpha-l, max) x day factor (SkyPhase.rainAlphaLight) */
+  --rain-alpha-l: 0.25;                                      /* light sky: the slate tile (rain-tile-light.png) at this layer alpha */
+  --rain-angle: 12;                                          /* degrees from vertical, baked into the tile */
+  /* 6.5 greeting + rain text (Caption weight) */
+  --greet-morning: 300; --greet-afternoon: 720; --greet-evening: 1020; --greet-night: 1260;   /* local minute each greeting starts (05:00 / 12:00 / 17:00 / 21:00); night runs to 05:00 */
+  --rain-likely-pct: 40;                                     /* hourly precipitation_probability that makes the sub-line say "Rain likely from HH:00" */
+  /* 6.7 status-strip scrim tint: the top colour of every keyframe (clear, then -oc), written by tools/make_sky.py */
+  /* sky-top:begin */
+  --sky-top-night: 6,12,32;
+  --sky-top-night-oc: 9,13,25;
+  --sky-top-dawn: 12,19,63;
+  --sky-top-dawn-oc: 23,24,46;
+  --sky-top-morning: 156,192,235;
+  --sky-top-morning-oc: 168,186,208;
+  --sky-top-noon: 210,224,236;
+  --sky-top-noon-oc: 212,218,225;
+  --sky-top-afternoon: 168,199,237;
+  --sky-top-afternoon-oc: 182,196,212;
+  --sky-top-golden: 180,186,216;
+  --sky-top-golden-oc: 180,182,195;
+  --sky-top-horizon: 81,81,157;
+  --sky-top-horizon-oc: 84,82,122;
+  --sky-top-sunset: 19,22,75;
+  --sky-top-sunset-oc: 28,26,52;
+  --sky-top-dusk: 9,14,50;
+  --sky-top-dusk-oc: 17,17,36;
+  --sky-top-sunrise: 81,81,157;
+  --sky-top-sunrise-oc: 82,80,118;
+  /* sky-top:end */
+  --tn-ramp: 0.5;                                            /* Rev 6 fix round 2: the text colour reaches --text-hi (tn = 1) at HALF the halo cap, so every strip element is at full strength as the halo builds */
+  --halo-cap: 0.30;                                          /* Rev 6: dawn/dusk text-protection alpha cap on the DARK side of the flip (white text, dark halo; was 0.40), every weather */
+  --halo-cap-light: 0.40;                                    /* Rev 6 fix round 2: the cap of the halo on the LIGHT side of the flip (a pale halo behind dark text: the soft dusk smudge the user complained about is the dark one). The same for every weather: the weather exception (.40) is gone */
+  --halo-passes: 4;                                          /* device Halo.java pass count; the mockup --halo and --halo-icon stacks in index.html must have exactly this many layers */
+  /* 6.6 clock polish */
+  --dream-colon-d: 26; --dream-colon-gap: 190;               /* colon = two circles, 26 px (1.5 x the 17 px Thin stem; the old glyph dots were 40 px), centres 190 px apart = 1/3 and 2/3 of the digit height, symmetric about the middle */
+
   /* wallpaper vignette [R3]: baked into the wallpaper bitmap on device */
   --wall-vignette-alpha: 0.40;
   --wallpaper: "dusk";
@@ -146,4 +259,46 @@
   --tile-w: 320; --tile-h: 192;
   --col-pitch: 360; --row-pitch: 292;
   --tile-r: 17;
+}
+
+/* ===== Rev 4: LIGHT theme = overrides of every theme-dependent token. Feels like tvOS light: warm-white wallpaper,
+   dark text, milky glass with a faint outline and a soft shadow, lighter shelf wash, softer focus lift. Banners and app art unchanged.
+   Contrast (tools/check_contrast.py): text >= 4.5:1 on the darkest day-wallpaper pixel, on glass and on the shelf wash. ===== */
+:root[data-theme="light"] {
+  --bg: #F4F1EC;
+  --text: #1B1B1F;
+  --text-hi: #08080B;
+  --text2: rgba(27,27,31,0.82);   /* Rev 6: was .76 (light sky behind it is brighter but not white) */
+  --text3: rgba(27,27,31,0.68);
+  --tile-edge: rgba(0,0,0,0.08);
+  --glass-thin: rgba(255,255,255,0.46);
+  --glass: rgba(255,255,255,0.66);
+  --glass-hairline: rgba(255,255,255,0.80);
+  --glass-thick: rgba(250,248,244,0.80);
+  --shadow: rgba(52,40,28,0.26);
+  --btn-focus-fill: #FFFFFF;
+  --btn-focus-text: #111111;
+  --glass-rim-hi: 0.95; --glass-rim-lo: 0.40;
+  --glass-top-edge: rgba(255,255,255,0.95);
+  --glass-inner-alpha: 0.38; --glass-refract-alpha: 0.50;
+  --glass-outline: rgba(70,58,46,0.13);
+  --dock-fill: rgba(255,255,255,0.52);
+  --strip-opacity-hint: 0.80;   /* Rev 6: was .72 */
+  --clock-opacity: 0.94;
+  /* softer lift: lower alphas, same offsets */
+  --shadow-alpha: 0.22; --contact-alpha: 0.20; --glass-drop-alpha: 0.16;
+  --hero-art-shadow-alpha: 0.26; --hero-art-contact-alpha: 0.22;
+  --glow-alpha: 0.38; --glow-lum: 0.55; --glow-dark-alpha: 0.45; --glow-dark-lum: 0.60;
+  /* Top Shelf wash: the app colour at low saturation, high lightness */
+  --hero-lum: 0.80; --hero-sat-max: 0.50; --hero-wash-mid-lum: 0.90; --hero-wash-mid: 0.42;
+  --hero-leak-alpha: 0.30;
+  --hb-sky: 0.45;   /* Rev 6: light shelf wash alpha multiplier while the sky is on (Theme Auto, Wallpaper Sky); the static walls keep 1 */
+  /* icon plates (shelf emblem card, icon-only tiles) are NOT themed: the dark plates stay in light mode, like banners. Mid-tone plates read muddy and the white letters fell to 2.4:1. */
+  --hero-dim-left: 0.30; --hero-dim-right: 0; --hero-dim-bottom: 0.20;
+  --hero-glow-alpha: 0.32; --hero-glow-flat-alpha: 0.20; --hero-emblem-glow-alpha: 0.30; --hero-bl-alpha: 0.22;
+  --drop-rgb: 52,40,28;
+  --veil: rgba(40,34,28,.36); --ctl-outline: rgba(70,58,46,.78); --tog-off: rgba(60,50,40,0.24); --title-shadow: rgba(255,255,255,0);
+  --fth-fill-a: rgba(255,255,255,0.70); --fth-fill-b: rgba(255,255,255,0.36); --fth-ink: rgba(27,27,31,0.78);
+  --wx-sun: #F59E0B; --wx-sun-core: #FFC83D; --wx-moon: #6D71AE; --wx-cloud: #9AA6BC; --wx-cloud-edge: rgba(27,27,31,.16);
+  --wx-rain: #2F7FE0; --wx-haze: rgba(27,27,31,.55);
 }

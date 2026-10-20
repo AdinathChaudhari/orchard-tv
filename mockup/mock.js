@@ -5,6 +5,12 @@ const Q = new URLSearchParams(location.search);
 const root = document.documentElement;
 const $ = (id) => document.getElementById(id);
 const tk = (n) => parseFloat(getComputedStyle(root).getPropertyValue('--' + n));
+/* raw token value for a given theme ('dark' | 'light'), read by flipping data-theme synchronously (no repaint, no transitions) */
+function tkRaw(n, th) {
+  if (root.dataset.theme === th) return getComputedStyle(root).getPropertyValue('--' + n).trim();
+  const cur = root.dataset.theme; root.dataset.theme = th;
+  const v = getComputedStyle(root).getPropertyValue('--' + n).trim(); root.dataset.theme = cur; return v;
+}
 const mk = (tag, cls, parent, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; if (parent) parent.appendChild(e); return e; };
 const SVGNS = 'http://www.w3.org/2000/svg';
 const svg = (inner, vb) => { const s = document.createElementNS(SVGNS, 'svg'); s.setAttribute('viewBox', vb || '0 0 48 48'); s.innerHTML = inner; return s; };
@@ -39,12 +45,23 @@ const S = {
   art: pick('art', ['real', 'placeholder'], (window.ORCHARD_REAL_ART === false && location.protocol === 'file:') ? 'placeholder' : 'real'),   // real banners by default; a fresh clone (real-art.js = false) opened from file:// starts on the placeholders, ?art=real overrides
   labels: pick('labels', ['focus', 'always'], 'focus'),
   reduced: Q.get('motion') === 'reduced' || matchMedia('(prefers-reduced-motion: reduce)').matches,
-  wall: pick('wall', ['dusk', 'ember', 'fog'], 'dusk'),
+  wall: pick('wall', ['sky', 'dusk', 'ember', 'fog'], 'sky'),   // Rev 6: sky (default, follows the sun) | the three static walls
+  sky: (Q.get('sky') && ['night', 'dawn', 'morning', 'noon', 'afternoon', 'golden', 'horizon', 'sunrise', 'sunset', 'dusk'].includes(Q.get('sky'))) ? Q.get('sky') : 'auto',   // ?sky=auto|<keyframe>: pin the sky to one keyframe (its clock time is the default ?time)
+  rainChance: (Q.get('rainchance') != null && /^\d{1,3}$/.test(Q.get('rainchance'))) ? Math.min(100, +Q.get('rainchance')) : null,   // ?rainchance=NN
+  drops: null,                          // D key: null = follow the weather, true / false = forced for review
   fth: Q.get('firetv_tile') !== 'off',
   hof: pick('hof', ['ok', 'missing', 'grant'], 'ok'),
   failReset: Q.get('reset') === 'fail',
   card: pick('card', ['emblem', 'banner', 'off'], Q.get('card') === 'on' ? 'banner' : 'emblem'),   // [P4] shelf card: emblem plate (default) | banner (the banner art) | off (wash + title only); ?card=on = banner (old links)
   chip: Q.get('chip') || '',
+  theme: pick('theme', ['auto', 'light', 'dark'], 'auto'),           // Rev 4: Auto (sunset) | Light | Dark
+  time: (Q.get('time') && Q.get('time') !== 'live' && parseTime(Q.get('time')) != null) ? parseTime(Q.get('time')) : null,   // ?time=HH:MM simulates the city's local clock; default 21:42 (the static strip clock)
+  live: Q.get('time') === 'live',
+  wxOn: Q.get('weather') !== 'off',                                   // Settings -> Weather (default ON); ?weather=off
+  wxNet: Q.get('weather') !== 'offline',                              // ?weather=offline: no data, chip hidden, never an error
+  units: pick('units', ['auto', 'c', 'f'], 'auto'),
+  city: 0,                                                            // index into CITIES; resolved in boot() from ?city= (default 'bengaluru', first in the list)
+  phase: null,
   r: 0, c: 0, wantC: 0,
   sheetFrom: 'home', safeFrom: null,
 };
@@ -60,6 +77,275 @@ function hsl2rgb([h, s, l]) { const f = (p, q, t) => { if (t < 0) t += 1; if (t 
 /* same hue/saturation, HSL lightness = target ("lum" in the tokens means HSL lightness) */
 function tone(hex, target, satMax) { const [h, s0] = rgb2hsl(hex2rgb(hex)); const s = satMax != null ? Math.min(s0, satMax) : s0;
   const [r, g, b] = hsl2rgb([h, s, target]); return `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`; }
+
+/* ---------- Rev 4: cities, NOAA sun engine, theme phases, mock weather ----------
+   Device twin: SunCalc.java (pure Java, host-tested), ThemePhase.java, WeatherClient.java. Same maths, same tokens. */
+const CITIES = [
+  { id: 'bengaluru', name: 'Bengaluru', cc: 'IN', lat: 12.9716, lon: 77.5946,  tz: 'Asia/Kolkata',     hi: 28, lo: 20, cond: 'clear' },   // Rev 6: mock default is a clear day so the sky shows at its best; ?wx=cloudy|rain|fog for the rest
+  { id: 'newdelhi',  name: 'New Delhi', cc: 'IN', lat: 28.6139, lon: 77.2090,  tz: 'Asia/Kolkata',     hi: 31, lo: 19, cond: 'clear' },
+  { id: 'mumbai',    name: 'Mumbai',    cc: 'IN', lat: 19.0760, lon: 72.8777,  tz: 'Asia/Kolkata',     hi: 33, lo: 25, cond: 'clear' },
+  { id: 'pune',      name: 'Pune',      cc: 'IN', lat: 18.5204, lon: 73.8567,  tz: 'Asia/Kolkata',     hi: 31, lo: 20, cond: 'cloud' },
+  { id: 'chennai',   name: 'Chennai',   cc: 'IN', lat: 13.0827, lon: 80.2707,  tz: 'Asia/Kolkata',     hi: 31, lo: 25, cond: 'rain' },
+  { id: 'kolkata',   name: 'Kolkata',   cc: 'IN', lat: 22.5726, lon: 88.3639,  tz: 'Asia/Kolkata',     hi: 32, lo: 24, cond: 'cloud' },
+  { id: 'hyderabad', name: 'Hyderabad', cc: 'IN', lat: 17.3850, lon: 78.4867,  tz: 'Asia/Kolkata',     hi: 31, lo: 21, cond: 'clear' },
+  { id: 'dubai',     name: 'Dubai',     cc: 'AE', lat: 25.2048, lon: 55.2708,  tz: 'Asia/Dubai',       hi: 36, lo: 26, cond: 'haze' },
+  { id: 'london',    name: 'London',    cc: 'GB', lat: 51.5072, lon: -0.1276,  tz: 'Europe/London',    hi: 14, lo: 8,  cond: 'rain' },
+  { id: 'lisbon',    name: 'Lisbon',    cc: 'PT', lat: 38.7223, lon: -9.1393,  tz: 'Europe/Lisbon',    hi: 22, lo: 14, cond: 'clear' },
+  { id: 'newyork',   name: 'New York',  cc: 'US', lat: 40.7128, lon: -74.0060, tz: 'America/New_York', hi: 16, lo: 9,  cond: 'cloud' },
+  { id: 'tokyo',     name: 'Tokyo',     cc: 'JP', lat: 35.6762, lon: 139.6503, tz: 'Asia/Tokyo',       hi: 21, lo: 14, cond: 'clear' },
+];
+const MOCK_DATE = [2026, 10, 20];   // the strip's static date (Tue 20 Oct); ?time=live uses the city's real date, as the device does
+/* y, m, d (and weekday/month names) of 'today': the city's real date when live, else the static mock date */
+function todayParts() {
+  if (!S.live) return { y: 2026, m: 10, d: 20, wd: 'Tue', mon: 'Oct' };
+  const f = new Intl.DateTimeFormat('en-US', { timeZone: curCity().tz, year: 'numeric', month: 'numeric', day: 'numeric', weekday: 'short' });
+  const o = Object.fromEntries(f.formatToParts(new Date()).map((x) => [x.type, x.value]));
+  return { y: +o.year, m: +o.month, d: +o.day, wd: o.weekday, mon: new Date(Date.UTC(2000, +o.month - 1, 1)).toLocaleString('en-US', { month: 'short', timeZone: 'UTC' }) };
+}
+
+/* NOAA solar calculator (Meeus), zenith 90.833 deg. Returns minutes after local midnight, or null + polar flag. */
+const Sun = (() => {
+  const R = Math.PI / 180, D = 180 / Math.PI;
+  const julian = (y, m, d) => { if (m <= 2) { y -= 1; m += 12; } const A = Math.floor(y / 100), B = 2 - A + Math.floor(A / 4); return Math.floor(365.25 * (y + 4716)) + Math.floor(30.6001 * (m + 1)) + d + B - 1524.5; };
+  function at(jd) {   // declination (deg) and equation of time (min) at a Julian day
+    const T = (jd - 2451545) / 36525;
+    const L0 = (280.46646 + T * (36000.76983 + T * 0.0003032)) % 360;
+    const M = 357.52911 + T * (35999.05029 - 0.0001537 * T);
+    const e = 0.016708634 - T * (0.000042037 + 0.0000001267 * T);
+    const C = Math.sin(M * R) * (1.914602 - T * (0.004817 + 0.000014 * T)) + Math.sin(2 * M * R) * (0.019993 - 0.000101 * T) + Math.sin(3 * M * R) * 0.000289;
+    const om = 125.04 - 1934.136 * T, lam = L0 + C - 0.00569 - 0.00478 * Math.sin(om * R);
+    const sec = 21.448 - T * (46.815 + T * (0.00059 - T * 0.001813)), eps0 = 23 + (26 + sec / 60) / 60, eps = eps0 + 0.00256 * Math.cos(om * R);
+    const decl = Math.asin(Math.sin(eps * R) * Math.sin(lam * R)) * D;
+    const y = Math.tan(eps * R / 2) ** 2;
+    const eq = 4 * D * (y * Math.sin(2 * L0 * R) - 2 * e * Math.sin(M * R) + 4 * e * y * Math.sin(M * R) * Math.cos(2 * L0 * R) - 0.5 * y * y * Math.sin(4 * L0 * R) - 1.25 * e * e * Math.sin(2 * M * R));
+    return { decl, eq };
+  }
+  function ha(lat, decl) { const c = Math.cos(90.833 * R) / (Math.cos(lat * R) * Math.cos(decl * R)) - Math.tan(lat * R) * Math.tan(decl * R); return c > 1 ? -1 : c < -1 ? 99 : Math.acos(c) * D; }   // -1 = sun never rises, 99 = never sets
+  function times(lat, lon, y, m, d, tzH) {
+    const jd0 = julian(y, m, d), utcOf = (min) => jd0 + (min / 1440) - tzH / 24;
+    const { decl, eq } = at(utcOf(720));
+    const noon0 = 720 - 4 * lon - eq + tzH * 60;
+    const h0 = ha(lat, decl);
+    if (h0 === -1) return { rise: null, set: null, noon: noon0, polar: 'night' };
+    if (h0 === 99) return { rise: null, set: null, noon: noon0, polar: 'day' };
+    let rise = noon0 - 4 * h0, set = noon0 + 4 * h0;
+    const a = at(utcOf(rise)), b = at(utcOf(set));          // one refinement at the event itself
+    const hr = ha(lat, a.decl), hs = ha(lat, b.decl);
+    if (hr > 0 && hr < 99) rise = 720 - 4 * lon - a.eq + tzH * 60 - 4 * hr;
+    if (hs > 0 && hs < 99) set = 720 - 4 * lon - b.eq + tzH * 60 + 4 * hs;
+    return { rise, set, noon: noon0, polar: null };
+  }
+  /* Rev 6: solar elevation (deg, refraction-corrected, NOAA) and azimuth (deg clockwise from north) at a local minute */
+  function pos(lat, lon, y, m, d, tzH, minute) {
+    const { decl, eq } = at(julian(y, m, d) + minute / 1440 - tzH / 24);
+    const tst = (((minute + eq + 4 * lon - 60 * tzH) % 1440) + 1440) % 1440, ha = tst / 4 - 180;
+    const sl = Math.sin(lat * R), cl = Math.cos(lat * R), sd = Math.sin(decl * R), cd = Math.cos(decl * R);
+    const cz = Math.max(-1, Math.min(1, sl * sd + cl * cd * Math.cos(ha * R))), zen = Math.acos(cz) * D, eg = 90 - zen;
+    const azr = Math.acos(Math.max(-1, Math.min(1, (sl * cz - sd) / (cl * Math.sin(zen * R) || 1e-9)))) * D;
+    const az = ha > 0 ? (azr + 180) % 360 : (540 - azr) % 360;
+    const t = Math.tan(eg * R); let rf;
+    if (eg > 85) rf = 0; else if (eg > 5) rf = 58.1 / t - 0.07 / t ** 3 + 0.000086 / t ** 5; else if (eg > -0.575) rf = 1735 + eg * (-518.2 + eg * (103.4 + eg * (-12.79 + eg * 0.711))); else rf = -20.774 / t;
+    return { e: eg + rf / 3600, az, eGeo: eg };
+  }
+  return { times, pos };
+})();
+function tzOffsetH(tz, y, m, d) {   // fixed offset for that local date (noon), via Intl; the device uses java.time / TimeZone
+  const f = new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' });
+  const p = Object.fromEntries(f.formatToParts(new Date(Date.UTC(y, m - 1, d, 12))).map((x) => [x.type, +x.value]));
+  return (Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - Date.UTC(y, m - 1, d, 12)) / 3600000;
+}
+const hhmm = (min) => { const m = ((Math.round(min) % 1440) + 1440) % 1440; return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
+function parseTime(s) { const m = /^(\d{1,2}):(\d{2})$/.exec(s || ''); return m && +m[1] < 24 && +m[2] < 60 ? +m[1] * 60 + +m[2] : null; }
+const smooth = (x) => { x = Math.max(0, Math.min(1, x)); return x * x * (3 - 2 * x); };
+const curCity = () => CITIES[S.city];
+function sunToday() { const c = curCity(), { y, m, d } = todayParts(); return Sun.times(c.lat, c.lon, y, m, d, tzOffsetH(c.tz, y, m, d)); }
+
+/* phase at local minute t: name, p (eased 0 night .. 1 day: alpha of the day layer), g (0..1 alpha of the golden-hour warm layer) */
+function phaseAt(t, sun) {
+  if (sun.rise == null) return sun.polar === 'day' ? { name: 'day', p: 1, g: 0 } : { name: 'night', p: 0, g: 0 };
+  const ds = sun.rise + tk('dawn-start'), dl = tk('dawn-len'), us = sun.set + tk('dusk-start'), ul = tk('dusk-len');
+  const gs = sun.set - tk('golden-len'), gr = tk('golden-ramp'), gf = tk('golden-fade');
+  let name, p;
+  if (t < ds) { name = 'night'; p = 0; }
+  else if (t < ds + dl) { name = 'dawn'; p = smooth((t - ds) / dl); }
+  else if (t < us) { name = t >= gs ? 'golden' : 'day'; p = 1; }
+  else if (t < us + ul) { name = 'dusk'; p = 1 - smooth((t - us) / ul); }
+  else { name = 'night'; p = 0; }
+  let g = 0;
+  if (t >= gs && t < us) g = smooth((t - gs) / gr);
+  else if (t >= us && t < us + gf) g = 1 - smooth((t - us) / gf);
+  return { name, p, g };
+}
+function themeState() {
+  const sun = sunToday();
+  if (S.theme === 'light') return { name: 'light', p: 1, g: 0, sun };
+  if (S.theme === 'dark') return { name: 'dark', p: 0, g: 0, sun };
+  return { ...phaseAt(S.time, sun), sun };
+}
+
+/* ---------- Rev 6: the sky engine. Device twin: SkyView.java + SkyPhase.java (pure Java, host-tested), see PLAN section 9 ---------- */
+let _sc = null;
+function sunCtx() { const c = curCity(), t = todayParts(), k = c.id + t.y + '-' + t.m + '-' + t.d; if (!_sc || _sc.k !== k) _sc = { k, c, y: t.y, m: t.m, d: t.d, tz: tzOffsetH(c.tz, t.y, t.m, t.d) }; return _sc; }
+const sunPos = (t) => { const x = sunCtx(); return Sun.pos(x.c.lat, x.c.lon, x.y, x.m, x.d, x.tz, t); };
+const RISE = [['night', 'dawn', 'nd'], ['dawn', 'sunrise', 'ds'], ['sunrise', 'morning', 'sm'], ['morning', 'noon', 'mn']];
+const SETT = [['noon', 'afternoon', 'na'], ['afternoon', 'golden', 'ag'], ['golden', 'horizon', 'gs'], ['horizon', 'sunset', 'gt'], ['sunset', 'dusk', 'sd'], ['dusk', 'night', 'dn']];
+/* elevation (deg) + side of noon -> the two keyframes and the mix f (0 = a only). Windows come from the tokens; those above 3 deg shrink with a low-sun day (emax < 50). */
+function skyAt(e, rising, emax) {
+  const k = Math.min(1, Math.max(0.15, emax / tk('sky-day-k-ref'))), sc = (x) => (x > 3 ? x * k : x);
+  let cur = rising ? 'night' : 'noon';
+  for (const [from, to, n] of rising ? RISE : SETT) {
+    const a = sc(tk('sky-' + n + '-a')), b = sc(tk('sky-' + n + '-b')), f = (e - a) / (b - a);
+    if (f <= 0) return { a: from, b: from, f: 0 };
+    if (f < 1) return { a: from, b: to, f: smooth(f) };
+    cur = to;
+  }
+  return { a: cur, b: cur, f: 0 };
+}
+const greeting = (t) => (t >= tk('greet-night') || t < tk('greet-morning') ? 'Good night' : t >= tk('greet-evening') ? 'Good evening' : t >= tk('greet-afternoon') ? 'Good afternoon' : 'Good morning');
+/* weather -> sky tint: overcast step alpha, rain dim, fog flag, sun/moon glow multiplier. Weather off / offline = clear (no data, never an error). */
+function wxSky() {
+  if (!(S.wxOn && S.wxNet)) return { oc: 0, rdim: 0, fog: 0, glow: 1 };
+  const c = wxCond();
+  return { oc: c === 'cloud' ? tk('wx-oc-cloud') : c === 'rain' ? tk('wx-oc-rain') : c === 'haze' ? tk('wx-oc-fog') : 0, rdim: c === 'rain' ? tk('wx-rain-dim') : 0, fog: c === 'haze' ? 1 : 0, glow: c === 'cloud' ? tk('wx-glow-cloud') : c === 'rain' ? tk('wx-glow-rain') : c === 'haze' ? tk('wx-glow-fog') : 1 };
+}
+const dropsOn = () => (S.drops != null ? S.drops : (S.wxOn && S.wxNet && wxCond() === 'rain'));
+function updateRain() { $('rain').classList.toggle('on', dropsOn() && $('stage').classList.contains('sky-on')); }
+const skyUrl = (k, oc) => `url(wall/sky-${k}${oc ? '-oc' : ''}.webp)`;
+const lerp = (a, b, t) => a + (b - a) * t, clamp01 = (x) => Math.max(0, Math.min(1, x));
+function applySky(st) {
+  const on = S.wall === 'sky' && S.theme === 'auto';
+  $('stage').classList.toggle('sky-on', on);
+  const sun = st.sun, pos = sunPos(S.time), rising = sun.noon != null ? S.time < sun.noon : true;
+  const emax = sun.noon != null ? sunPos(Math.round(sun.noon)).e : 60;
+  const ks = S.sky !== 'auto' ? { a: S.sky, b: S.sky, f: 0 } : skyAt(pos.e, rising, emax);
+  S.skyState = { ...ks, e: pos.e, az: pos.az, rising };
+  if (!on) { root.style.removeProperty('--sf'); updateRain(); return; }
+  const w = wxSky(), oc = w.oc >= 0.5;
+  // hand-over: when the new pair's A is the old pair's B (a window just finished and the next began), the picture on screen is already that keyframe. Swap the layer roles with NO transition for one frame
+  // (new A = old B at alpha 1, new B = the next keyframe at alpha f) instead of fading the old B out under a freshly loaded next keyframe, which flashed it for ~1 s. Time jumps and weather changes keep the 900 ms fade.
+  const prev = S.skPrev, roll = !!prev && ks.a !== prev.a && ks.a === prev.b && prev.f >= 0.9;
+  S.skPrev = { a: ks.a, b: ks.b, f: ks.f };
+  if (roll) { $('sky').classList.add('skroll'); $('scrim').classList.add('skroll'); }
+  $('skA').style.backgroundImage = skyUrl(ks.a); $('skB').style.backgroundImage = skyUrl(ks.b); $('skB').style.opacity = ks.f;
+  $('skAo').style.backgroundImage = skyUrl(ks.a, 1); $('skBo').style.backgroundImage = skyUrl(ks.b, 1); $('skBo').style.opacity = ks.f;
+  $('skOc').style.opacity = w.oc;
+  root.style.setProperty('--wallurl', skyUrl(ks.a, oc)); root.style.setProperty('--wallurl-day', skyUrl(ks.b, oc)); root.style.setProperty('--sf', ks.f);   // glass slices sample the same pair (pre-blurred on device)
+  // fog veil: each theme's veil fades to 0 AT the theme flip (the hand-over frame is mid-luminance, and a lifted sky there fails both text colours) and is full only at its own end
+  const fl = tk('theme-flip-at'), fD = w.fog * tk('wx-fog-day-a') * smooth(clamp01((st.p - fl) / (1 - fl))), fN = w.fog * tk('wx-fog-night-a') * smooth(clamp01((fl - st.p) / fl));
+  $('fogD').style.opacity = fD; $('fogN').style.opacity = fN;
+  $('rdim').style.opacity = w.rdim;
+  // rain by day: a flat slate veil (alpha only, like the fog veil) so a rainy day reads darker than a cloudy one; 0 exactly at the theme flip, full at the end of the cross-fade
+  const rD = w.rdim > 0 ? tk('wx-rain-day-a') * smooth(clamp01((st.p - fl) / (1 - fl))) : 0; $('rdimD').style.opacity = rD;
+  const skyRgb = (k, o) => getComputedStyle(root).getPropertyValue('--sky-top-' + k + (o ? '-oc' : '')).trim().split(',').map(Number);
+  const mixRgb = (x, y, t) => x.map((v, i) => v + (y[i] - v) * t);
+  const skyC = mixRgb(mixRgb(skyRgb(ks.a), skyRgb(ks.b), ks.f), mixRgb(skyRgb(ks.a, 1), skyRgb(ks.b, 1), ks.f), w.oc);   // flat top colour, as the device's scrimRgb (before the fog/dim veils)
+  const skyL = (0.2126 * skyC[0] + 0.7152 * skyC[1] + 0.0722 * skyC[2]) / 255;                                              // gamma-encoded Rec.709 luma, like SkyPhase.lum
+  const rainA = Math.max(tk('rain-alpha-l'), Math.min(tk('rain-alpha-l-max'), skyL - 0.305 <= 1e-6 ? tk('rain-alpha-l-max') : tk('rain-contrast-l') / (skyL - 0.305)));   // streak alpha tracks the sky so peak contrast stays level (SkyPhase.rainAlphaLight)
+  root.style.setProperty('--rain-lk', (rainA * smooth(clamp01((st.p - fl) / (1 - fl)))).toFixed(3));   // the slate drops of the light theme ramp in with the day, like the veil: 0 at the theme flip (a slate streak over a mid-luminance sky costs dark text its contrast)
+  // status-strip scrim: the same stack as the sky, flat top colours (tokens --sky-top-<key>[-oc])
+  const top = (k, o) => 'rgb(' + getComputedStyle(root).getPropertyValue('--sky-top-' + k + (o ? '-oc' : '')).trim() + ')';
+  $('scA').style.background = top(ks.a); $('scB').style.background = top(ks.b); $('scB').style.opacity = ks.f;
+  $('scAo').style.background = top(ks.a, 1); $('scBo').style.background = top(ks.b, 1); $('scBo').style.opacity = ks.f;
+  $('scOc').style.opacity = w.oc; $('scFogD').style.opacity = fD; $('scFogN').style.opacity = fN; $('scDim').style.opacity = w.rdim; $('scDimD').style.opacity = rD;
+  if (roll) { void $('sky').offsetWidth; void $('scrim').offsetWidth; $('sky').classList.remove('skroll'); $('scrim').classList.remove('skroll'); }
+  // sun glow: x by azimuth (east left .. west right via the equator-ward side), y by elevation; alpha ramps in over [e0, e1]
+  const W = tk('canvas-w'), H = tk('canvas-h');
+  const sz = tk('glow-sun-size'), sx = W * lerp(tk('glow-x0'), tk('glow-x1'), 0.5 + 0.5 * Math.sin((pos.az - 180) * Math.PI / 180));
+  const sy = H * lerp(tk('glow-sun-y-low'), tk('glow-sun-y-top'), Math.pow(clamp01(pos.e / 70), 0.8));
+  $('glowSun').style.transform = `translate(${(sx - sz / 2).toFixed(1)}px,${(sy - sz / 2).toFixed(1)}px)`;
+  $('glowSun').style.opacity = (tk('glow-sun-a') * smooth((pos.e - tk('glow-sun-e0')) / (tk('glow-sun-e1') - tk('glow-sun-e0'))) * w.glow).toFixed(3);
+  // moon glow: positioned by the time of night (no ephemeris: a calm arc east to west), alpha ramps in as the sun sinks past -4
+  const mz = tk('glow-moon-size'); let u = 0.5;
+  if (sun.rise != null) { const len = sun.rise + 1440 - sun.set; u = clamp01(((S.time >= sun.set ? S.time - sun.set : S.time + 1440 - sun.set)) / len); }
+  const mx = W * lerp(tk('glow-moon-x0'), tk('glow-moon-x1'), u), my = H * lerp(tk('glow-moon-y0'), tk('glow-moon-y1'), Math.pow(Math.sin(Math.PI * u), 0.8));
+  $('glowMoon').style.transform = `translate(${(mx - mz / 2).toFixed(1)}px,${(my - mz / 2).toFixed(1)}px)`;
+  $('glowMoon').style.opacity = (tk('glow-moon-a') * smooth((pos.e - tk('glow-moon-e0')) / (tk('glow-moon-e1') - tk('glow-moon-e0'))) * w.glow).toFixed(3);
+  updateRain();
+}
+let lastTheme = null;
+function applyTheme(user) {
+  const st = themeState(); S.phase = st;
+  const light = st.p >= tk('theme-flip-at');
+  $('wallday').style.opacity = st.p; $('twilight').style.opacity = tk('tw-peak') * 4 * st.p * (1 - st.p); $('golden').style.opacity = st.g; root.style.setProperty('--p', st.p); root.style.setProperty('--hbk', 1 - tk('hero-tw-cut') * 4 * st.p * (1 - st.p));   // Rev 5b: the opaque shelf backdrops average to grey mid-fade and hid the dusk layer under the hero; their alpha falls by 4p(1-p)*cut so the twilight palette reads through
+  { const f = tk('theme-flip-at');   // halo cap per side of the flip, the same in every weather: a dark halo behind white text .30, a pale one behind dark text .40
+    const cap = light ? tk('halo-cap-light') : tk('halo-cap'), raw = st.name === 'dawn' || st.name === 'dusk' ? 0.9 * (1 - Math.abs(st.p - f) / (st.p < f ? f : 1 - f)) : 0, ts = Math.max(0, Math.min(cap, raw));
+    root.style.setProperty('--ts', ts); root.style.setProperty('--tn', cap > 0 ? Math.min(1, ts / (cap * tk('tn-ramp'))) : 0); }   // --ts = text-protection halo alpha, --tn = 0..1 how far the text colour has risen to full --text
+  if (lastTheme !== null && lastTheme !== light) { root.classList.add('flip'); clearTimeout(root._fl); root._fl = setTimeout(() => root.classList.remove('flip'), 80); }
+  root.dataset.theme = light ? 'light' : 'dark';
+  if (lastTheme !== null && lastTheme !== light) { if (heroApp) setHero(heroApp, true); if (focusTile) setGlow(focusTile); }
+  if (user && lastTheme !== null && lastTheme !== light) { const sh = $('shelf'); sh.classList.add('themefade'); clearTimeout(sh._tf); sh._tf = setTimeout(() => sh.classList.remove('themefade'), tk('theme-hero-fade-ms') + 100); }
+  lastTheme = light;
+  applySky(st); $('greet').textContent = greeting(S.time);
+  $('clock').textContent = hhmm(S.time); { const t = todayParts(); $('date').textContent = t.wd + ' ' + t.d + ' ' + t.mon; }
+  updateWx(); updateSunNote(); updateDbg();
+}
+
+/* ---- weather (mock data, no network; the device calls Open-Meteo, see PLAN Rev 4) ---- */
+const GLYPH = {
+  sun: '<g class="g-ray"><path d="M24 4v5M24 39v5M4 24h5M39 24h5M9.9 9.9l3.5 3.5M34.6 34.6l3.5 3.5M9.9 38.1l3.5-3.5M34.6 13.4l3.5-3.5"/></g><circle class="g-sun" cx="24" cy="24" r="10.5"/><circle class="g-core" cx="21.5" cy="21.5" r="5.5" opacity=".7"/>',
+  moon: '<path class="g-moon" d="M35 31.5A15 15 0 1 1 19.5 8.5 12 12 0 0 0 35 31.5Z"/>',
+  cloud: '<path class="g-cloud" d="M13 36H34A7.5 7.5 0 0 0 35.5 21.2 11 11 0 0 0 14.2 19.4 8.9 8.9 0 0 0 13 36Z"/>',
+  rain: '<path class="g-cloud" d="M13 31H34A7 7 0 0 0 35.4 17.2 10.5 10.5 0 0 0 14.2 15.6 8.7 8.7 0 0 0 13 31Z"/><path class="g-rain" d="M17 36l-2.4 6M25 36l-2.4 6M33 36l-2.4 6"/>',
+  haze: '<circle class="g-sun" cx="24" cy="18" r="9.5" opacity=".85"/><path class="g-haze" d="M8 31h32M12 37h24M17 43h14"/>',
+};
+function wxCond() { const m = { clear: 'clear', cloudy: 'cloud', cloud: 'cloud', rain: 'rain', fog: 'haze', haze: 'haze' }[S.wxq != null ? S.wxq : Q.get('wx')]; return m || curCity().cond; }   // ?wx=clear|cloudy|rain|fog
+/* mock Open-Meteo: hourly precipitation_probability for today. Raining now = the current hour carries the chance; the 16:00-19:00 window carries it when rain is the story (wx=rain or ?rainchance=). */
+const rainPct = () => (S.rainChance != null ? S.rainChance : wxCond() === 'rain' ? 70 : 5);
+function popAt(h) {
+  const story = wxCond() === 'rain' || S.rainChance != null;
+  if (wxCond() === 'rain' && h === Math.floor(S.time / 60)) return rainPct();
+  return story && h >= 16 && h < 20 ? rainPct() : 5;
+}
+function rainLikelyHour() { for (let h = Math.floor(S.time / 60) + 1; h < 24; h++) if (popAt(h) >= tk('rain-likely-pct')) return h; return null; }   // first UPCOMING hour today (after the current one: a rain that is already falling is the chip's 'Rain 70%', never announced as a forecast) with chance >= 40
+function wxNow() {
+  const c = curCity(), sun = S.phase.sun, t = S.time;
+  const f = 0.5 + 0.5 * Math.cos(2 * Math.PI * (t - 900) / 1440), c0 = c.lo + (c.hi - c.lo) * f;   // warmest 15:00, coolest 03:00
+  const day = sun.rise != null ? t >= sun.rise && t < sun.set : sun.polar === 'day', cond = wxCond();
+  return { c: c0, hi: c.hi, lo: c.lo, cond, day, raining: cond === 'rain', pct: rainPct(), glyph: cond === 'clear' ? (day ? 'sun' : 'moon') : cond === 'haze' && !day ? 'moon' : cond };
+}
+const useF = () => S.units === 'f' || (S.units === 'auto' && curCity().cc === 'US');
+const degs = (c) => Math.round(useF() ? c * 9 / 5 + 32 : c) + '°';
+function updateWx() {
+  const on = S.wxOn && S.wxNet && S.screen !== 'safe';
+  $('wx').classList.toggle('on', on);
+  if (!on) return;
+  const w = wxNow(), sun = S.phase.sun;
+  $('wxg').innerHTML = GLYPH[w.glyph]; $('wxt').textContent = degs(w.c);
+  $('wxhl').textContent = 'H ' + degs(w.hi) + '  L ' + degs(w.lo);
+  $('wxr').textContent = w.raining ? '· Rain ' + w.pct + '%' : '';   // Rev 6: '24° · Rain 70%' while it is raining now
+  const aft = sun.rise != null && (S.time >= sun.set || S.time < sun.rise);   // after sunset (or before dawn): the next event is the sunrise
+  const rl = rainLikelyHour();
+  $('wxc').textContent = rl != null ? 'Rain likely from ' + hhmm(rl * 60) : curCity().name + (sun.set != null ? (aft ? ' · Sunrise ' + hhmm(sun.rise) : ' · Sunset ' + hhmm(sun.set)) : '');
+}
+const PHASE_LABEL = { night: 'Night', dawn: 'Dawn', day: 'Day', golden: 'Golden hour', dusk: 'Dusk', light: 'Light (fixed)', dark: 'Dark (fixed)' };
+function updateSunNote() {
+  const sun = S.phase.sun, c = curCity();
+  const el = $('sunnote');
+  el.innerHTML = sun.rise != null ? `Today in <b>${c.name}</b><br>Sunrise <b>${hhmm(sun.rise)}</b> · Sunset <b>${hhmm(sun.set)}</b><br>Now: <b>${PHASE_LABEL[S.phase.name]}</b> · showing ${root.dataset.theme === 'light' ? 'Light' : 'Dark'}` : `Today in <b>${c.name}</b>: the sun does not ${sun.polar === 'day' ? 'set' : 'rise'}.`;
+  $('citynote').innerHTML = `Now: <b>${c.name}</b><br>Sunset <b>${sun.set != null ? hhmm(sun.set) : '–'}</b> · ${hhmm(S.time)} local`;
+}
+/* debug bar */
+/* Rev 6 presets: the clock time at which each sky keyframe holds (found by scanning today's elevation curve), plus the elevation each is read at */
+const SKY_KEYS = ['night', 'dawn', 'morning', 'noon', 'afternoon', 'golden', 'sunset', 'dusk'];
+const KEY_AT = { dawn: [-6.7, true], sunrise: [-2.4, true], morning: [4, true], afternoon: [18, false], golden: [3, false], horizon: [-2.5, false], sunset: [-5.2, false], dusk: [-11, false], night: [-25, false] };   // hold elevations (inside each keyframe's own window-free hold)
+function keyTime(key, sun) {
+  if (key === 'noon') return Math.round(sun.noon);
+  const [te, rising] = KEY_AT[key]; let best = null, bd = 1e9;
+  for (let t = 0; t < 1440; t++) { if ((t < sun.noon) !== rising) continue; const d = Math.abs(sunPos(t).e - te); if (d < bd) { bd = d; best = t; } }
+  return best;
+}
+const dbgPresets = () => { const s = sunToday(); return ['dawn', 'morning', 'noon', 'golden', 'sunset', 'dusk', 'night'].map((k) => [k, keyTime(k, s)]); };
+let dbgI = -1;
+function updateDbg() {
+  $('dbgrange').value = S.time;
+  const st = S.phase, sun = st.sun;
+  const sk = S.skyState;
+  $('dbgphase').textContent = `${hhmm(S.time)}  ${PHASE_LABEL[st.name]}  ·  day ${Math.round(st.p * 100)}%  ·  ${root.dataset.theme}  ·  sun ${sk ? sk.e.toFixed(1) : '?'}° az ${sk ? Math.round(sk.az) : '?'}°  ·  sky ${sk ? (sk.b !== sk.a ? sk.a + '>' + sk.b + ' ' + Math.round(sk.f * 100) + '%' : sk.a) : '-'}${S.sky !== 'auto' ? ' (pinned)' : ''}  ·  ${wxCond()}`;
+  $('dbgsun').textContent = sun.rise != null ? `rise ${hhmm(sun.rise)}  ·  set ${hhmm(sun.set)}  ·  T: next preset${dbgI >= 0 ? ' (' + dbgPresets()[dbgI][0] + ')' : ''}  ·  D: rain drops` : 'polar';
+  const m = $('dbgm'); m.innerHTML = ''; [sun.rise, sun.set].forEach((x) => { if (x != null) { const i = mk('i', null, m); i.style.left = (x / 1439 * 100) + '%'; } });
+}
+function setTime(min) { S.time = Math.max(0, Math.min(1439, Math.round(min))); applyTheme(); }
+function cycleTime() { const p = dbgPresets(); dbgI = (dbgI + 1) % p.length; $('dbg').classList.add('on'); S.sky = 'auto'; setTime(p[dbgI][1]); }
 
 /* ---------- art (banner image with CSS fallback, never a drawn logo) ---------- */
 const vivid = (app) => (S.art === 'real' ? app.vivid : app.color) || app.color;
@@ -152,18 +438,24 @@ let heroSide = 0, heroApp = null, heroTimer = 0;
 function fillHero(layer, app) {
   layer.innerHTML = '';
   let v = vivid(app);
-  const hbg = mk('div', 'hbg', layer);
-  // 1. colour wash: radial from the app's vivid colour (L capped) centred behind the card, to bg
-  const wash = mk('div', 'wash', hbg);
-  const paintWash = () => {
-    const c0 = tone(v, tk('hero-lum'), tk('hero-sat-max')), c1 = tone(v, tk('hero-wash-mid-lum'), tk('hero-sat-max'));
-    wash.style.background = `radial-gradient(${tk('hero-wash-rx') * 100}% ${tk('hero-wash-ry') * 100}% at ${tk('hero-wash-x') * 100}% ${tk('hero-wash-y') * 100}%, ${c0} 0%, ${c1} ${tk('hero-wash-mid') * 100}%, var(--bg) 100%)`;
-  };
+  // Rev 4: the backdrop is built twice (dark + light token sets) and the light one is cross-faded over the dark one by p (CSS: .hb-l opacity var(--p))
+  const bls = [], washes = [];
+  ['dark', 'light'].forEach((th) => {
+    const hbg = mk('div', 'hbg ' + (th === 'dark' ? 'hb-d' : 'hb-l'), layer);
+    ['bg', 'hero-leak-alpha', 'hero-dim-left', 'hero-dim-right', 'hero-dim-bottom', 'hero-bl-alpha'].forEach((n) => hbg.style.setProperty('--' + n, tkRaw(n, th)));
+    // 1. colour wash: radial from the app's vivid colour (L capped) centred behind the card, to bg
+    const wash = mk('div', 'wash', hbg); washes.push([wash, th]);
+    // 2. full-bleed pre-blurred banner (hero=blur), filled once we know which file really loaded
+    if (S.hero === 'blur') bls.push(mk('div', 'bl', hbg));
+    mk('div', 'leak', hbg);
+    mk('div', 'dim', hbg);
+  });
+  const paintWash = () => washes.forEach(([wash, th]) => {
+    const T = (n) => parseFloat(tkRaw(n, th));
+    const c0 = tone(v, T('hero-lum'), T('hero-sat-max')), c1 = tone(v, T('hero-wash-mid-lum'), T('hero-sat-max'));
+    wash.style.background = `radial-gradient(${T('hero-wash-rx') * 100}% ${T('hero-wash-ry') * 100}% at ${T('hero-wash-x') * 100}% ${T('hero-wash-y') * 100}%, ${c0} 0%, ${c1} ${T('hero-wash-mid') * 100}%, var(--bg) 100%)`;
+  });
   paintWash();
-  // 2. full-bleed pre-blurred banner (hero=blur), filled once we know which file really loaded
-  const bl = S.hero === 'blur' ? mk('div', 'bl', hbg) : null;
-  mk('div', 'leak', hbg);
-  mk('div', 'dim', hbg);
   // 3. the card, backlit by its own blurred art. Flat vivid-colour glow until a banner loads (and for icon-only apps / near-white banners)
   const g = mk('div', 'hglow', layer);
   const flat = () => { g.style.backgroundImage = 'none'; g.style.background = tone(v, tk('hero-glow-flat-lum')); g.style.opacity = app.white ? tk('hero-glow-alpha') : tk('hero-glow-flat-alpha'); };
@@ -185,10 +477,10 @@ function fillHero(layer, app) {
   art.appendChild(makeFace(app, null, (src) => {
     const v2 = vividFor(app, src);
     if (v2 !== v) { v = v2; paintWash(); if (!g.style.backgroundImage || g.style.backgroundImage === 'none') flat(); }
-    if (!src) { if (bl) bl.remove(); return; }
+    if (!src) { bls.forEach((x) => x.remove()); return; }
     // near-white banners would bloom grey: keep the vivid-colour glow instead of the blurred banner
     if (!app.white) { g.style.background = ''; g.style.backgroundImage = `url(${src})`; g.style.opacity = ''; }
-    if (bl) bl.style.backgroundImage = `url(${src})`;
+    bls.forEach((x) => { x.style.backgroundImage = `url(${src})`; });
   }));
   }
   mk('div', 'htitle', layer, app.name);
@@ -218,6 +510,10 @@ function startSwaySoon() {
   }, tk('sway-start-ms'));
 }
 function scaleNow() { return S.reduced ? tk('reduced-scale') : tk('focus-scale'); }
+function textW(el) {   // measured text width in canvas px (Range rect / stage scale)
+  const r = document.createRange(); r.selectNodeContents(el); const k = $('stage').getBoundingClientRect().width / tk('canvas-w');
+  return r.getBoundingClientRect().width / (k || 1);
+}
 function placeLabel() {
   if (!focusTile) return; const TH = tk('tile-h');
   const sc = scaleNow() + (document.body.classList.contains('idle') && !S.reduced ? tk('idle-scale-add') : 0);
@@ -243,7 +539,7 @@ function setFocus(r, c, instant) {
   if (instant) { void sh.offsetWidth; sh.style.transition = ''; }
   // label sits under the SCALED tile: bottom + (scale-1)*h/2 + 16
   const TW = tk('tile-w'), TH = tk('tile-h');
-  const lb = $('flabel'); lb.textContent = t.app.name;
+  const lb = $('flabel'); lb.textContent = t.app.name; lb.style.setProperty('--fl-w', textW(lb) + 'px');
   lb.style.left = (t.x + TW / 2) + 'px';
   placeLabel();
   lb.classList.remove('show'); void lb.offsetWidth; lb.classList.add('show');
@@ -284,7 +580,20 @@ function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add
 
 /* ---------- generic focus list for panel / sheet / settings / safe ---------- */
 let list = { items: [], idx: 0 };
-function setList(items, idx) { list.items.forEach((e) => e.classList.remove('focused')); list = { items, idx }; items.forEach((e, i) => e.classList.toggle('focused', i === idx)); }
+function setList(items, idx) { list.items.forEach((e) => e.classList.remove('focused')); list = { items, idx }; items.forEach((e, i) => e.classList.toggle('focused', i === idx));
+  { const h = $('sshint'); if (h) h.classList.toggle('on', S.screen === 'settings' && !!items[idx] && items[idx]._k === 'saver'); }
+  if (S.screen === 'settings') listScroll('swin', 'slist', idx, items.length); else if (S.screen === 'city') listScroll('cwin', 'clist', idx, items.length); }
+/* scrolling lists (Settings 15 rows, City 12 rows): minimal scroll that keeps the focused row and one neighbour in view; translate only */
+function listScroll(winId, lstId, idx, n) {
+  const win = $(winId), lst = $(lstId), P = tk('list-row-h') + tk('list-row-gap'), view = tk('list-view-h'), total = n * P - tk('list-row-gap');
+  let off = +(lst.dataset.off || 0);
+  const top = idx * P, bot = top + tk('list-row-h'), padT = idx > 0 ? P : 0, padB = idx < n - 1 ? P : 0;
+  if (top - padT < off) off = top - padT;
+  if (bot + padB > off + view) off = bot + padB - view;
+  off = Math.max(0, Math.min(Math.max(0, total - view), off));
+  lst.dataset.off = off; lst.style.transform = `translateY(${-off}px)`;
+  win.classList.toggle('top', off <= 0); win.classList.toggle('bottom', off >= total - view - 0.5);
+}
 function moveList(d, horizontal) {
   const n = list.items.length, i = list.idx + d;
   if (i < 0 || i >= n) return bump(list.items[list.idx], horizontal ? d : 0, horizontal ? 0 : d);
@@ -319,10 +628,44 @@ function selectPanel() {
   const i = list.idx;
   if (i === 0) { closePanel(false); setVeil(null); showSettings(); }
   else if (i === 1) { closePanel(false); openSheet('panel'); }
-  else if (i === 2) toast('Screensaver (ClockDream) is not part of the mockup');
+  else if (i === 2) openDream('panel');
   else toast('Opens Fire TV Settings (mock)');
 }
 function setVeil(kind) { const v = $('veil'); v.className = kind ? 'on ' + kind : ''; }
+
+/* ---------- Rev 5: screensaver preview (ClockDream). Device twin: ClockDream.java, one custom View, see PLAN Rev 5 ---------- */
+const DREAM_SHIFTS = [[0, 0], [12, -6], [-12, 6], [6, 12], [-6, -12], [12, 10], [-10, -4], [4, -10], [-4, 10], [10, 2], [-12, -10], [8, -12]];   // all inside +-12 px = the 24 px box; device: same table, index = minute-of-epoch % 12
+const dreamFixed = Q.has('dreamshift') || Q.has('dreamdim');   // a pinned preview (shots, tests): no minute tick, no dim timer
+let dreamT = 0, dreamDimT = 0, dreamPrev = 'home', dreamIdx = 0;
+function dreamLine() {
+  const t = todayParts(); let s = t.wd + ' ' + t.d + ' ' + t.mon;
+  if (S.wxOn && S.wxNet) {   // weather part hidden when weather is off or offline
+    const w = wxNow(), rl = rainLikelyHour();
+    s += ' · ' + degs(w.c) + (w.raining ? ' · Rain ' + w.pct + '%' : rl != null ? ' · Rain from ' + hhmm(rl * 60) : ' ' + curCity().name);   // Rev 6: 'Tue 20 Oct · 24° · Rain 70%' when it rains now, '... · Rain from 16:00' when it is coming
+  }
+  return s;
+}
+function drawDream() {
+  const live = S.live ? (() => { const c = curCity(), p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: c.tz, hourCycle: 'h23', hour: 'numeric', minute: 'numeric' }).formatToParts(new Date()).map((x) => [x.type, +x.value])); return p.hour * 60 + p.minute; })() : null;
+  if (live != null) S.time = live;
+  $('dtime').innerHTML = hhmm(S.time).replace(/\d/g, '<i>$&</i>').replace(':', '<b>:</b>');   // one fixed-width cell per glyph, proportional figure centred in it (no tabular-one foot slab, no jump)
+  $('dline').textContent = dreamLine();
+  const [dx, dy] = DREAM_SHIFTS[((dreamIdx % DREAM_SHIFTS.length) + DREAM_SHIFTS.length) % DREAM_SHIFTS.length];
+  const g = $('dgroup'); g.style.setProperty('--dx', dx); g.style.setProperty('--dy', dy);
+}
+function dreamTick() { dreamIdx = Math.floor(Date.now() / 60000); drawDream(); dreamT = setTimeout(dreamTick, 60000 - (Date.now() % 60000) + 20); }   // postDelayed to the next minute boundary: once a minute, no Choreographer
+function openDream(from) {
+  dreamPrev = from || S.screen; S.screen = 'dream'; setScreenAttr(); clearTimeout(idleT);
+  const g = $('dgroup'); g.classList.add('nofade'); g.classList.toggle('dim', Q.get('dreamdim') === '1'); void g.offsetWidth; g.classList.remove('nofade');
+  dreamIdx = Q.has('dreamshift') ? (parseInt(Q.get('dreamshift'), 10) || 0) : Math.floor(Date.now() / 60000);
+  drawDream(); $('dream').classList.add('open');
+  if (!dreamFixed) { dreamT = setTimeout(dreamTick, 60000 - (Date.now() % 60000) + 20); dreamDimT = setTimeout(() => $('dgroup').classList.add('dim'), tk('dream-dim-min') * 60000); }
+}
+function closeDream() {
+  clearTimeout(dreamT); clearTimeout(dreamDimT); $('dream').classList.remove('open'); $('dgroup').classList.remove('dim');
+  S.screen = dreamPrev; setScreenAttr(); if (S.screen === 'home') wake();
+}
+$('dream').addEventListener('click', () => { if (S.screen === 'dream') closeDream(); });   // any key (or a click) wakes: exactly like the real screensaver
 
 /* ---------- Reset confirm sheet ---------- */
 function openSheet(from) {
@@ -359,7 +702,13 @@ function closeSheet() {
 }
 
 /* ---------- Settings ---------- */
+const UNITS_LABEL = { auto: 'Auto', c: '°C', f: '°F' };
 const SET_ROWS = [
+  { k: 'theme',  label: 'Theme',              get: () => ({ auto: 'Auto (sunset)', light: 'Light', dark: 'Dark' })[S.theme], raw: () => S.theme, opts: ['auto', 'light', 'dark'], set: (v) => { S.theme = v; applyTheme(true); } },
+  { k: 'weather',label: 'Weather',            tog: () => S.wxOn, flip: () => { S.wxOn = !S.wxOn; updateWx(); } },
+  { k: 'units',  label: 'Units',              get: () => UNITS_LABEL[S.units] + (S.units === 'auto' ? (useF() ? ' (°F)' : ' (°C)') : ''), raw: () => S.units, opts: ['auto', 'c', 'f'], set: (v) => { S.units = v; updateWx(); } },
+  { k: 'city',   label: 'City',               val: () => curCity().name, go: () => showCities() },
+  { k: 'saver',  label: 'Screensaver',        val: () => 'Preview', go: () => openDream('settings') },
   { k: 'cols',   label: 'Columns',            get: () => String(S.cols), opts: ['5', '6'], set: (v) => { S.cols = +v; S.r = 0; S.c = 0; S.wantC = 0; buildHome(); } },
   { k: 'clock',  label: 'Clock',              tog: () => S.clock, flip: () => { S.clock = !S.clock; applyChrome(); } },
   { k: 'card',   label: 'Shelf card',         get: () => S.card, opts: ['emblem', 'banner', 'off'], set: (v) => { S.card = v; applyChrome(); setHero(heroApp, true); } },
@@ -367,7 +716,7 @@ const SET_ROWS = [
   { k: 'art',    label: 'Tile art',           get: () => S.art, opts: ['real', 'placeholder'], set: (v) => { S.art = v; buildHome(); setHero(heroApp, true); } },
   { k: 'labels', label: 'Tile labels',        get: () => (S.labels === 'always' ? 'Always' : 'Focused only'), opts: ['focus', 'always'], raw: () => S.labels, set: (v) => { S.labels = v; applyChrome(); } },
   { k: 'motion', label: 'Reduced motion',     tog: () => S.reduced, flip: () => setReduced(!S.reduced) },
-  { k: 'wall',   label: 'Wallpaper',          get: () => S.wall, opts: ['dusk', 'ember', 'fog'], set: (v) => { S.wall = v; applyChrome(); } },
+  { k: 'wall',   label: 'Wallpaper',          get: () => S.wall, opts: ['sky', 'dusk', 'ember', 'fog'], set: (v) => { S.wall = v; applyChrome(); applyTheme(); } },
   { k: 'fth',    label: 'Fire TV Home tile',  tog: () => S.fth, flip: () => { S.fth = !S.fth; buildHome(); } },
   { k: 'reset',  label: 'Return to Fire TV…', go: () => openSheet('settings') },
   { k: 'safe',   label: 'Safe mode preview',  go: () => showSafe('settings') },
@@ -375,7 +724,7 @@ const SET_ROWS = [
 function buildSettings() {
   const host = $('slist'); host.innerHTML = '';
   SET_ROWS.forEach((d) => {
-    const row = mk('div', 'row', host); mk('span', null, row, d.label); const val = mk('span', 'val', row); d.rowEl = row; d.valEl = val;
+    const row = mk('div', 'row', host); row._k = d.k; mk('span', null, row, d.label); const val = mk('span', 'val', row); d.rowEl = row; d.valEl = val;
   });
   refreshSettings();
 }
@@ -383,6 +732,7 @@ function refreshSettings() {
   SET_ROWS.forEach((d) => {
     d.valEl.innerHTML = '';
     if (d.tog) mk('span', 'tog' + (d.tog() ? ' on' : ''), d.valEl);
+    else if (d.val) d.valEl.textContent = d.val() + '  ›';
     else if (d.get) d.valEl.textContent = '‹  ' + d.get() + '  ›';
     else d.valEl.textContent = '›';
   });
@@ -408,6 +758,30 @@ function hideSettings() {
   startSwaySoon(); wake();
 }
 
+/* ---------- City list (Settings -> City): D-pad list, Select sets it, Back returns ---------- */
+let cityRows = [];
+const CHECK = '<svg class="ck" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+function buildCities() {
+  const host = $('clist'); host.innerHTML = ''; cityRows = [];
+  const { y, m, d } = todayParts();
+  CITIES.forEach((c, i) => {
+    const row = mk('div', 'row', host), lab = mk('span', 'lab', row); mk('span', null, lab, c.name);
+    const val = mk('span', 'val', row); const sun = Sun.times(c.lat, c.lon, y, m, d, tzOffsetH(c.tz, y, m, d));
+    row._c = i; row._sun = sun; row._val = val; cityRows.push(row);
+  });
+  refreshCities();
+}
+function refreshCities() {
+  cityRows.forEach((row, i) => { row._val.innerHTML = ''; if (i === S.city) row._val.insertAdjacentHTML('beforeend', CHECK); mk('span', 'dim', row._val, 'Sunset ' + hhmm(row._sun.set)); });
+}
+function showCities() {
+  S.screen = 'city'; setScreenAttr(); S._settingsIdx = list.idx;
+  $('settings').classList.remove('open'); $('cities').classList.add('open');
+  setList(cityRows, S.city);
+}
+function pickCity() { S.city = list.idx; refreshCities(); applyTheme(); hideCities(); }   // Select sets and returns; the Settings City row value confirms (no toast)
+function hideCities() { $('cities').classList.remove('open'); S.screen = 'settings'; $('settings').classList.add('open'); showSettings(true); refreshSettings(); }
+
 /* ---------- Safe mode ---------- */
 function showSafe(from) {
   blurHome(); S.screen = 'safe'; S.safeFrom = from; setScreenAttr(); stopSway();
@@ -431,10 +805,11 @@ function applyChrome() {
   document.body.classList.toggle('reduced', S.reduced);
   document.body.classList.toggle('labels-always', S.labels === 'always');
   $('clockwrap').classList.toggle('off', !S.clock);
-  const w = $('wall'); w.style.backgroundImage = `url(wall/${S.wall}.webp)`;
-  root.style.setProperty('--wallurl', `url(wall/${S.wall}.webp)`);   // every glass slice samples the (pre-blurred) wallpaper only
+  const legacy = S.wall === 'sky' ? 'dusk' : S.wall;   // Rev 6: 'sky' follows the sun in Theme = Auto; a fixed Light / Dark theme keeps the Rev 4 static walls (a fixed Light on a night sky would put dark text on navy)
+  const w = $('wall'); w.style.backgroundImage = `url(wall/${legacy}.webp)`;
+  root.style.setProperty('--wallurl', `url(wall/${legacy}.webp)`); root.style.setProperty('--wallurl-day', 'url(wall/day.webp)'); $('wallday').style.backgroundImage = 'url(wall/day.webp)';   // every glass slice samples the (pre-blurred) wallpaper only
   document.body.classList.toggle('card-off', S.card === 'off');
-  const tint = { dusk: ['#2B2E5C', '#15161C'], ember: ['#4A1418', '#0B0B0D'], fog: ['#3A4452', '#0C0D10'] }[S.wall];
+  const tint = { dusk: ['#2B2E5C', '#15161C'], ember: ['#4A1418', '#0B0B0D'], fog: ['#3A4452', '#0C0D10'] }[legacy];
   w.style.backgroundColor = tint[1]; w.dataset.wall = S.wall;
   let chipText = S.chip; if (S.screen === 'safe') chipText = 'Safe mode';
   $('chip').textContent = chipText; $('chip').classList.toggle('on', !!chipText);
@@ -452,6 +827,7 @@ function onBack() {
     case 'sheet': closeSheet(); break;
     case 'settings': hideSettings(); break;
     case 'safe': hideSafe(); break;
+    case 'city': hideCities(); break;
     default:   // home: scroll to top + focus dock 1, consumed (never leaves the launcher)
       if (S.r !== 0 || S.c !== 0) { S.wantC = 0; setFocus(0, 0); } else bump(focusTile.el, -1, 0);
   }
@@ -462,6 +838,7 @@ function onSelect() {
     case 'panel': selectPanel(); break;
     case 'sheet': $('sheet')._actions[list.idx](); break;
     case 'settings': changeSetting(0); break;
+    case 'city': pickCity(); break;
     case 'safe': if (list.idx === 0) toast('Opens Amazon’s home (mock)'); else hideSafe(); break;
   }
 }
@@ -470,6 +847,7 @@ function onDir(dx, dy) {
     case 'home': moveHome(dx, dy); break;
     case 'panel': case 'sheet': if (dx) moveList(dx, true); else if (dy < 0 && S.screen === 'panel') {} break;
     case 'settings': if (dy) moveList(dy, false); else changeSetting(dx); break;
+    case 'city': if (dy) moveList(dy, false); break;
     case 'safe': if (dy) moveList(dy, false); break;
   }
 }
@@ -480,6 +858,7 @@ function menuShort() {
 }
 addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (S.screen === 'dream') { if (!e.repeat) closeDream(); e.preventDefault(); return; }   // any key wakes the screensaver; the key itself is consumed
   const k = e.key; let handled = true; wake();
   if (k === 'ArrowLeft') onDir(-1, 0);
   else if (k === 'ArrowRight') onDir(1, 0);
@@ -495,7 +874,9 @@ addEventListener('keydown', (e) => {
       menuHoldT = setTimeout(() => { if (menuDown) toast('Long Menu: Home on Fire’s own screen opens, not Orchard’s panel'); }, tk('menu-hoof-ms'));
     }
   }
+  else if (k === 't' || k === 'T') { if (!e.repeat) { if (e.shiftKey) $('dbg').classList.remove('on'); else cycleTime(); } }
   else if (k === 'r' || k === 'R') { if (!e.repeat) setReduced(!S.reduced); }
+  else if (k === 'd' || k === 'D') { if (!e.repeat) { S.drops = !dropsOn(); updateRain(); toast('Rain drops ' + (S.drops ? 'on' : 'off') + ' (review)'); } }
   else if (k === '?' || k === '/') $('keys').classList.toggle('on');
   else handled = false;
   if (handled) e.preventDefault();
@@ -511,16 +892,26 @@ addEventListener('blur', () => { menuDown = null; clearTimeout(menuHoldT); });  
 
 /* ---------- boot ---------- */
 function boot() {
-  fit(); applyChrome(); buildPanel(); buildSettings(); buildHome();
+  S.city = Math.max(0, CITIES.findIndex((c) => c.id === (Q.get('city') || 'bengaluru')));
+  if (S.time == null) S.time = S.sky !== 'auto' ? keyTime(S.sky, sunToday()) : tk('time-default');
+  S.live = S.live || false;
+  if (S.live) { const c = curCity(), p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: c.tz, hourCycle: 'h23', hour: 'numeric', minute: 'numeric' }).formatToParts(new Date()).map((x) => [x.type, +x.value])); S.time = p.hour * 60 + p.minute; }
+  fit(); applyChrome(); buildPanel(); buildCities(); buildSettings(); applyTheme(); buildHome();
+  $('dbgrange').addEventListener('input', (e) => { setTime(+e.target.value); e.target.blur(); });
+  if (Q.get('debug') === '1') $('dbg').classList.add('on');
+  if (S.live) setInterval(() => { const c = curCity(), p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: c.tz, hourCycle: 'h23', hour: 'numeric', minute: 'numeric' }).formatToParts(new Date()).map((x) => [x.type, +x.value])); setTime(p.hour * 60 + p.minute); }, tk('theme-tick-s') * 1000);
+  setTimeout(() => root.classList.remove('boot'), 120);
   const want = Q.get('screen') || 'home';
   const fo = (Q.get('focus') || '').split(',').map(Number);   // [P4] ?focus=R,C: open with that tile focused (instant, normal setFocus path)
   if (fo.length === 2 && fo.every(Number.isInteger) && rows[fo[0]] && rows[fo[0]][fo[1]]) { S.wantC = fo[1]; setFocus(fo[0], fo[1], true); }
   if (want === 'panel') openPanel();
   else if (want === 'reset') openSheet('home');
   else if (want === 'settings') showSettings();
+  else if (want === 'city') { showSettings(); list.idx = SET_ROWS.findIndex((d) => d.k === 'city'); showCities(); }
   else if (want === 'safe') showSafe(null);
+  else if (want === 'dream') openDream('home');
   setScreenAttr(); wake();
-  window.__orchard = { S, get focus() { return document.body.dataset.focus; } };
+  window.__orchard = { S, setTime, setWx: (v) => { S.wxq = v; applyTheme(); }, skyReady: () => Promise.all(['skA', 'skB', 'skAo', 'skBo'].map((id) => { const i = new Image(); i.src = $(id).style.backgroundImage.slice(5, -2); return i.decode().catch(() => {}); })), sunPos, skyAt, keyTime, greeting, wxSky, rainLikelyHour, popAt, get focus() { return document.body.dataset.focus; }, Sun, CITIES, sunToday, phaseAt, hhmm, tzOffsetH };
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { document.body.dataset.fonts = 'ready'; });
 }
 /* a fresh clone has no banners-real/ (git-ignored): probe once and default to the placeholders so the console stays clean */

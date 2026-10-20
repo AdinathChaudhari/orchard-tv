@@ -53,6 +53,7 @@ public final class SettingsList extends FrameLayout {
         Runnable run;
         boolean disabled;
         IntConsumerLike horizontal;
+        String hint;
 
         Item(int kind, String label) {
             this.kind = kind;
@@ -65,12 +66,21 @@ public final class SettingsList extends FrameLayout {
             return this;
         }
 
+        /** Text the host may show (e.g. as the subtitle) while this row is focused. */
+        public Item hint(String h) {
+            hint = h;
+            return this;
+        }
+
         /** LEFT/RIGHT call this instead of the default behaviour (p5-2b: reorder). Ignored while disabled. */
         public Item onHorizontal(IntConsumerLike h) {
             horizontal = h;
             return this;
         }
     }
+
+    /** Called with the row index each time a row gains focus. */
+    public interface FocusListener { void onFocus(int index, Item item); }
 
     public static Item toggle(String label, BoolGetter g, BoolSetter s) {
         Item i = new Item(Item.TOGGLE, label);
@@ -114,6 +124,8 @@ public final class SettingsList extends FrameLayout {
     private boolean reduced;
     private int focusIdx;
     private boolean pendingJump;
+    private FocusListener focusListener;
+    private final ArrayList<Item> itemList = new ArrayList<Item>();
 
     public SettingsList(Context c) {
         super(c);
@@ -149,6 +161,8 @@ public final class SettingsList extends FrameLayout {
     public void setItems(List<Item> items, int focusIndex) {
         column.removeAllViews();
         rows.clear();
+        itemList.clear();
+        if (items != null) itemList.addAll(items);
         int n = items == null ? 0 : items.size();
         for (int i = 0; i < n; i++) {
             Row r = new Row(getContext(), this, items.get(i), i);
@@ -168,6 +182,13 @@ public final class SettingsList extends FrameLayout {
         pendingJump = true;
         rows.get(f).requestFocus();
         requestLayout();
+    }
+
+    public void setFocusListener(FocusListener l) { focusListener = l; }
+
+    /** Re-reads the live Theme palette into every row (call after Theme.set). */
+    public void applyTheme() {
+        for (int i = 0; i < rows.size(); i++) rows.get(i).invalidate();
     }
 
     /** Index of the focused row (the last focused one while focus is elsewhere, e.g. under a sheet). */
@@ -217,6 +238,7 @@ public final class SettingsList extends FrameLayout {
 
     void onRowFocused(int index) {
         focusIdx = index;
+        if (focusListener != null && index >= 0 && index < itemList.size()) focusListener.onFocus(index, itemList.get(index));
         column.setFront(index);
         if (scroll.getHeight() == 0) {
             pendingJump = true;
@@ -314,7 +336,7 @@ public final class SettingsList extends FrameLayout {
         return (Math.round(((c >>> 24) & 255) * m) << 24) | (c & 0xFFFFFF);
     }
 
-    private static final int WHITE_OFF = Ui.argb(Ui.TOGGLE_OFF_ALPHA, 0xFFFFFF);
+    private static final int LIGHT_ROW_FILL = Ui.argb(0.06f, 0x1B1B1F);      // mockup :root[data-theme=light] .row:not(.focused)
     private static final int DARK_OFF = Ui.argb(0.25f, 0x111111);
     private static final int DARK_VAL = Ui.argb(Ui.LIST_VAL_DARK_ALPHA, 0x111111);
     private static final int DARK_DISABLED = Ui.argb(0.42f, 0x111111);
@@ -327,6 +349,7 @@ public final class SettingsList extends FrameLayout {
         private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final TextPaint labelPaint = new TextPaint(Paint.ANTI_ALIAS_FLAG);
         private final TextPaint valuePaint = new TextPaint(Paint.ANTI_ALIAS_FLAG);
+        private final TextPaint detailPaint = new TextPaint(Paint.ANTI_ALIAS_FLAG);      // CHECK detail: caption1, like .val .dim
         private final Paint pill = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint knob = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint checkPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -359,6 +382,9 @@ public final class SettingsList extends FrameLayout {
             valuePaint.setTypeface(Ui.regular());
             valuePaint.setTextSize(Ui.pxf(Ui.T_BODY));
             valuePaint.setLetterSpacing(Ui.tracking(Ui.T_BODY));
+            detailPaint.setTypeface(Ui.regular());
+            detailPaint.setTextSize(Ui.pxf(Ui.T_CAPTION1));
+            detailPaint.setLetterSpacing(Ui.tracking(Ui.T_CAPTION1));
             checkPaint.setStyle(Paint.Style.STROKE);
             checkPaint.setStrokeCap(Paint.Cap.ROUND);
             checkPaint.setStrokeJoin(Paint.Join.ROUND);
@@ -443,7 +469,7 @@ public final class SettingsList extends FrameLayout {
             if (item.kind == Item.TOGGLE) {
                 reserve = Ui.pxf(Ui.TOGGLE_W) + Ui.pxf(Ui.LIST_VAL_GAP);
             } else {
-                if (!valueText.isEmpty()) reserve += valuePaint.measureText(valueText) + Ui.pxf(Ui.LIST_VAL_GAP);
+                if (!valueText.isEmpty()) reserve += valueWidth() + Ui.pxf(Ui.LIST_VAL_GAP);
                 if (item.kind == Item.CHECK && checked) reserve += Ui.pxf(26f) + Ui.pxf(Ui.LIST_VAL_GAP);
             }
             float avail = Math.max(Ui.pxf(80), right - padX - reserve);
@@ -451,12 +477,16 @@ public final class SettingsList extends FrameLayout {
             checkPath.reset();
             if (item.kind == Item.CHECK && checked) {
                 float sz = Ui.pxf(26f);
-                float vw = valueText.isEmpty() ? 0f : valuePaint.measureText(valueText) + Ui.pxf(Ui.LIST_VAL_GAP);
+                float vw = valueText.isEmpty() ? 0f : valueWidth() + Ui.pxf(Ui.LIST_VAL_GAP);
                 float x0 = right - vw - sz, cy = getHeight() / 2f;
                 checkPath.moveTo(x0, cy + sz * 0.05f);
                 checkPath.lineTo(x0 + sz * 0.38f, cy + sz * 0.42f);
                 checkPath.lineTo(x0 + sz, cy - sz * 0.40f);
             }
+        }
+
+        private float valueWidth() {
+            return (item.kind == Item.CHECK ? detailPaint : valuePaint).measureText(valueText);
         }
 
         @Override
@@ -609,18 +639,19 @@ public final class SettingsList extends FrameLayout {
             int w = getWidth(), h = getHeight();
             float f = fp < 0f ? 0f : (fp > 1f ? 1f : fp);
             if (f > Ui.DRAW_MIN_PROGRESS && shadowBmp != null) {
-                shadowPaint.setAlpha(Math.round(255f * f));
+                shadowPaint.setAlpha(Math.round(255f * f * (Theme.cur().light ? 0.55f : 1f)));
                 c.drawBitmap(shadowBmp, -shadowPad() + (w - Ui.px(Ui.LIST_W)) / 2f,
                     -shadowPad() + Ui.pxf(Ui.LIST_SHADOW_Y), shadowPaint);
             }
             float r = Ui.pxf(Ui.LIST_ROW_R);
             rect.set(0f, 0f, w, h);
-            fill.setColor(lerpColor(Ui.GLASS_THIN, Ui.BTN_FOCUS_FILL, f));
+            Theme th = Theme.cur();
+            fill.setColor(lerpColor(th.light ? LIGHT_ROW_FILL : th.glassThin, th.btnFocusFill, f));
             c.drawRoundRect(rect, r, r, fill);
 
             boolean dis = item.disabled;
-            int labelCol = dis ? lerpColor(Ui.TEXT3, DARK_DISABLED, f) : lerpColor(Ui.TEXT, Ui.BTN_FOCUS_TEXT, f);
-            int valCol = dis ? labelCol : lerpColor(Ui.TEXT2, DARK_VAL, f);
+            int labelCol = dis ? lerpColor(th.text3, DARK_DISABLED, f) : lerpColor(th.text, th.btnFocusText, f);
+            int valCol = dis ? labelCol : lerpColor(th.text2, DARK_VAL, f);
             float cy = h / 2f;
             float padX = Ui.pxf(Ui.LIST_PAD_X);
 
@@ -632,7 +663,7 @@ public final class SettingsList extends FrameLayout {
             if (item.kind == Item.TOGGLE) {
                 float pw = Ui.pxf(Ui.TOGGLE_W), ph = Ui.pxf(Ui.TOGGLE_H);
                 float px0 = right - pw, py0 = cy - ph / 2f;
-                int off = lerpColor(WHITE_OFF, DARK_OFF, f);
+                int off = lerpColor(th.togOff, DARK_OFF, f);
                 pill.setColor(mulAlpha(lerpColor(off, Ui.ACCENT, tp), dis ? 0.5f : 1f));
                 rect.set(px0, py0, px0 + pw, py0 + ph);
                 c.drawRoundRect(rect, ph / 2f, ph / 2f, pill);
@@ -641,15 +672,15 @@ public final class SettingsList extends FrameLayout {
                 knob.setAlpha(dis ? 128 : 255);
                 c.drawCircle(kx + k / 2f, cy, k / 2f, knob);
             } else {
-                valuePaint.setColor(valCol);
-                float vw = 0f;
+                TextPaint vp = item.kind == Item.CHECK ? detailPaint : valuePaint;
+                vp.setColor(valCol);
                 if (!valueText.isEmpty()) {
-                    vw = valuePaint.measureText(valueText);
-                    float vb = cy - (valuePaint.ascent() + valuePaint.descent()) / 2f;
-                    c.drawText(valueText, right - vw, vb, valuePaint);
+                    float vw = vp.measureText(valueText);
+                    float vb = cy - (vp.ascent() + vp.descent()) / 2f;
+                    c.drawText(valueText, right - vw, vb, vp);
                 }
                 if (item.kind == Item.CHECK && checked) {
-                    checkPaint.setColor(labelCol);
+                    checkPaint.setColor(dis ? labelCol : lerpColor(Ui.ACCENT, th.btnFocusText, f));
                     c.drawPath(checkPath, checkPaint);
                 }
             }

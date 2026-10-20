@@ -5,7 +5,6 @@ import android.app.ActivityOptions;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
-import android.graphics.drawable.ColorDrawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -35,7 +34,14 @@ public class HomeActivity extends Activity {
     private Config config;
     private AppCatalog catalog;
     private ArtCache art;
-    private Wallpaper wallpaper;
+    private SkyView sky;                                              // Rev 6 sky backdrop (Wallpaper "sky" + auto theme)
+    private WallStack wallStack;                                      // night/day wall pair otherwise
+    private RainLayer rain;
+    private Bitmap lastSlice;                                         // 240x135 backdrop slice for the glass views, null when released
+    private boolean skyActive;                                        // which backdrop is live
+    private boolean resumed;                                          // between onResume and onPause
+    private boolean rainWanted;                                       // the last AmbientState asks for rain
+    private int prevThemeMode = -1;                                   // AmbientState.themeMode last seen, to spot a user Theme change
     private FrameLayout root, content, overlay;
     private HomeScroll scroll;
     private TopShelfView topShelf;
@@ -61,8 +67,7 @@ public class HomeActivity extends Activity {
     private boolean clockArmed;                                       // a key DOWN was eaten while the clock is up
     private int seenEpoch;                                            // SettingsActivity save counter last applied
     private final KeyRules.MenuTap menuTap = new KeyRules.MenuTap(Ui.MENU_MAX_TAP_MS);
-    private boolean released;                                         // onStop dropped wallpaper + art
-    private String loadedWallpaper;
+    private boolean released;                                         // onStop dropped backdrops + art
 
     // ---- motion state (task 4.2) ----
     private boolean reducedMotion;                                    // evaluated in buildHome + restoreState
@@ -81,6 +86,9 @@ public class HomeActivity extends Activity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        // PLAN 2.2: boot_attempts++ is the first thing HomeActivity does (not the Application: dream binds and receiver-only
+        // process starts must not count). FirstFrame.watch clears it; evaluateLaunch then sets LAUNCH_VIA_HOME for this launch.
+        ((OrchardApp) getApplication()).state().incrementBootAttempts();
         super.onCreate(savedInstanceState);
         Ui.init(this);
         bridge = new FireTvBridge(this);
@@ -124,7 +132,22 @@ public class HomeActivity extends Activity {
         labelsAlways = "always".equals(config.get(Config.Keys.LABELS, "focus"));
 
         root = frame(this);
-        root.setBackgroundColor(Ui.BG);
+        root.setBackgroundColor(Theme.cur().bg);
+        sky = new SkyView(this);
+        sky.setVisibility(View.GONE);
+        root.addView(sky, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        wallStack = new WallStack(this);
+        root.addView(wallStack, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        rain = new RainLayer(this);                                  // one tile taller than the screen, parked one tile above
+        FrameLayout.LayoutParams rlp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+            getResources().getDisplayMetrics().heightPixels + Ui.px(Ui.RAIN_TILE));
+        rlp.topMargin = -Ui.px(Ui.RAIN_TILE);
+        root.addView(rain, rlp);
+        SkyAssets.SliceListener sl = this::onSlice;
+        sky.setSliceListener(sl);
+        wallStack.setSliceListener(sl);
         scroll = new HomeScroll(this);
         content = frame(this);
         scroll.addView(content, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0));
@@ -155,9 +178,6 @@ public class HomeActivity extends Activity {
         seenEpoch = app.settingsEpoch();
         app.setSettingsListener(this::onSettingsChangedLive);   // DebugReceiver changes reach a visible Home at once
 
-        wallpaper = new Wallpaper(this);
-        loadWallpaper();
-
         root.getViewTreeObserver().addOnGlobalFocusChangeListener((oldFocus, newFocus) -> onFocusMoved(newFocus));
 
         catalog = new AppCatalog(this, config);
@@ -168,16 +188,14 @@ public class HomeActivity extends Activity {
         return root;
     }
 
-    private void loadWallpaper() {
-        loadedWallpaper = config.get(Config.Keys.WALLPAPER, Ui.DEFAULT_WALLPAPER);
-        wallpaper.load(loadedWallpaper, w -> {
-            if (released) return;                                    // decoded after onStop: stay released
-            root.setBackground(w.drawable());
-            dockBand.setWallpaper(w.blurred());
-            if (panel != null) panel.setWallpaper(w.blurred());
-            if (sheet != null) sheet.setWallpaper(w.blurred());
-            if (menu != null) menu.setWallpaper(w.blurred());
-        });
+    /** A fresh backdrop slice: the glass views blur from it (ignored once released). */
+    private void onSlice(Bitmap b) {
+        if (released || b == null) return;
+        lastSlice = b;
+        dockBand.setWallpaper(b);
+        if (panel != null) panel.setWallpaper(b);
+        if (sheet != null) sheet.setWallpaper(b);
+        if (menu != null) menu.setWallpaper(b);
     }
 
     /** One entry per tile slot; null = the Fire TV Home tile. */
@@ -295,6 +313,10 @@ public class HomeActivity extends Activity {
         TileView.setReducedMotion(r);
         scroll.setReducedMotion(r);
         topShelf.setReducedMotion(r);
+        sky.setReducedMotion(r);
+        wallStack.setReducedMotion(r);
+        rain.setReducedMotion(r);
+        updateRain();
     }
 
     private void setAllIdle(boolean on) {
@@ -405,7 +427,7 @@ public class HomeActivity extends Activity {
         if (t.isFireTvHome() || t.entry() == null) {
             t.press(() -> {
                 if (overlayOpen()) return;
-                sheet = ConfirmSheet.showReset(overlay, bridge, wallpaper.blurred(), this::onSheetClosed);
+                sheet = ConfirmSheet.showReset(overlay, bridge, lastSlice, this::onSheetClosed);
                 overlayChanged();
             });
         } else {
@@ -446,6 +468,7 @@ public class HomeActivity extends Activity {
 
     /** Re-sync home state with the overlay stack: block + suppress while anything is up, restore when the last closes. */
     private void overlayChanged() {
+        strip.setWeatherHidden(panel.isOpen() || sheet != null);
         if (overlayOpen()) {
             scroll.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
             topShelf.setSuppressed(true);
@@ -465,7 +488,7 @@ public class HomeActivity extends Activity {
 
     private void openPanel() {
         if (panel == null || overlay == null || panel.isOpen() || sheet != null || clock != null || menu != null) return;
-        panel.setWallpaper(wallpaper.blurred());
+        panel.setWallpaper(lastSlice);
         refreshPanelState();
         panel.setVisibility(View.VISIBLE);
         panel.open();
@@ -512,15 +535,15 @@ public class HomeActivity extends Activity {
     private void openResetSheet() {
         Runnable closed = this::onSheetClosed;
         sheet = bridge.redirectOn()
-            ? ConfirmSheet.showReset(overlay, bridge, wallpaper.blurred(), closed)
-            : ConfirmSheet.showRedirectOn(overlay, bridge, wallpaper.blurred(), closed);
+            ? ConfirmSheet.showReset(overlay, bridge, lastSlice, closed)
+            : ConfirmSheet.showRedirectOn(overlay, bridge, lastSlice, closed);
     }
 
     private void openFireTvSettings() {
         try {
             startActivity(FireTvBridge.fireTvSettingsIntent());
         } catch (RuntimeException e) {
-            sheet = ConfirmSheet.message(overlay, wallpaper.blurred(), "Fire TV Settings",
+            sheet = ConfirmSheet.message(overlay, lastSlice, "Fire TV Settings",
                 "Could not open Fire TV Settings on this Stick.", this::onSheetClosed);
         }
     }
@@ -542,6 +565,7 @@ public class HomeActivity extends Activity {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         clockArmed = false;
         clock.start();
+        updateRain();
     }
 
     /** Stops and removes the clock preview; the caller re-syncs the overlay state. */
@@ -551,6 +575,7 @@ public class HomeActivity extends Activity {
         overlay.removeView(clock);
         clock = null;
         clockArmed = false;
+        updateRain();
     }
 
     /**
@@ -663,7 +688,7 @@ public class HomeActivity extends Activity {
         overlay.addView(menu, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         menu.show(t.label(), java.util.Arrays.copyOf(acts, n), java.util.Arrays.copyOf(labels, n),
-            java.util.Arrays.copyOf(on, n), r, wallpaper.blurred());
+            java.util.Arrays.copyOf(on, n), r, lastSlice);
         overlayChanged();
     }
 
@@ -1050,9 +1075,70 @@ public class HomeActivity extends Activity {
     protected void onResume() {
         super.onResume();
         if (!safe && root != null) {
+            resumed = true;
             restoreState();
+            Ambient.get(this).start(this::onAmbient);               // delivers once at once (forced), then once per minute
             wake();                                                  // undims anything left dim by onPause, re-arms timer
         }
+    }
+
+    // ---- ambient (Rev 4 to 6) -----------------------------------------------------------------------------
+
+    /** One AmbientState per minute (or on a change): theme, backdrop, strip chip + greeting, rain. Main thread. */
+    private void onAmbient(AmbientState s) {
+        if (root == null || safe) return;
+        boolean userThemeChange = prevThemeMode >= 0 && prevThemeMode != s.themeMode;
+        prevThemeMode = s.themeMode;
+        if (Theme.set(s.light, s.ts, s.tn)) {
+            strip.applyTheme();
+            topShelf.applyTheme();
+            for (int i = 0; i < rows.size(); i++) rows.get(i).applyTheme();
+            dockBand.applyTheme();
+            panel.applyTheme();
+            if (sheet != null) sheet.applyTheme();
+            if (menu != null) menu.applyTheme();
+            root.setBackgroundColor(Theme.cur().bg);
+        }
+        topShelf.setThemeMix(s.p, s.sky, userThemeChange);
+        boolean animate = s.jump && !reducedMotion;
+        if (!released) {
+            if (s.sky) {
+                if (!skyActive) {
+                    skyActive = true;
+                    wallStack.release();
+                    wallStack.setVisibility(View.GONE);
+                }
+                sky.setState(s, animate);
+            } else {
+                if (skyActive || sky.getVisibility() != View.GONE) {
+                    skyActive = false;
+                    sky.setState(s, false);                          // not sky: releases itself and goes GONE
+                }
+                wallStack.setVisibility(View.VISIBLE);
+                wallStack.setState(s, animate);
+            }
+        } else {
+            skyActive = s.sky;
+        }
+        boolean clockOn = config.getBool(Config.Keys.CLOCK, true);
+        strip.setGreeting(clockOn ? s.greeting : null);
+        strip.setClockPin(s.clockMs, s.clockPinned);
+        strip.setWeather(s.wxShown, s.wxGlyph, s.wxTemp, s.wxRain, s.wxHighLow, s.wxCaption);
+        strip.setScrimColour(s.sky && s.frame != null ? s.frame.scrimRgb : Theme.cur().bg);
+        Theme.setScrim(s.sky && s.frame != null ? s.frame.scrimRgb : Theme.cur().bg);
+        rainWanted = s.sky && s.frame != null && s.frame.rainOn;
+        if (rainWanted) {
+            rain.setRain(true, s.light, s.light ? s.frame.rainAlpha : Ui.RAIN_ALPHA);
+        } else {
+            rain.setRain(false, s.light, Ui.RAIN_ALPHA);
+        }
+        updateRain();
+    }
+
+    /** Rain animates only while resumed, wanted, no clock preview and motion allowed; otherwise paused (static drops when reduced). */
+    private void updateRain() {
+        if (rain == null) return;
+        if (rainWanted && resumed && clock == null && !reducedMotion) rain.play(); else rain.pause();
     }
 
     /** DebugReceiver / other out-of-activity config change while Home is alive: re-read and rebuild now (main thread). */
@@ -1076,10 +1162,8 @@ public class HomeActivity extends Activity {
             labelsAlways = "always".equals(config.get(Config.Keys.LABELS, "focus"));
             strip.setClockVisible(config.getBool(Config.Keys.CLOCK, true));
             strip.setClock24h(config.getBool(Config.Keys.CLOCK_24H, true));
-            if (!released && !config.get(Config.Keys.WALLPAPER, Ui.DEFAULT_WALLPAPER).equals(loadedWallpaper)) {
-                loadWallpaper();
-            }
             topShelf.bind(art, config);                              // card / hero / debug_card may have changed
+            Ambient.get(this).settingsChanged();                     // theme / wallpaper / city / weather / clock: re-deliver now
             catalog.refresh();                                       // order / hidden / dock live in the config
             buildRows();
         } else if (!overlayOpen() && !(root.findFocus() instanceof TileView)) {
@@ -1100,6 +1184,11 @@ public class HomeActivity extends Activity {
 
     @Override
     protected void onPause() {
+        resumed = false;
+        if (root != null) {
+            Ambient.get(this).stop();                                // no minute tick, no receiver behind another app
+            rain.pause();
+        }
         cancelMove();
         dropSheet();                                                 // a sheet never survives leaving the screen (stale sheet ate the first Select)                                                // before the idle timer is cancelled below
         selectDown = false;
@@ -1124,6 +1213,7 @@ public class HomeActivity extends Activity {
         cancelMove();
         if (root == null || released) return;
         released = true;
+        Halo.clear();
         art.trim();
         for (int r = 0; r < rows.size(); r++) {
             TileRow row = rows.get(r);
@@ -1133,12 +1223,14 @@ public class HomeActivity extends Activity {
             }
         }
         topShelf.release();                                          // drops card/glow bitmaps; wash + text stay
-        wallpaper.release();                                         // sharp + blurred (the blur is cached on disk)
+        sky.release();                                               // keyframes + glows
+        wallStack.release();                                         // sharp walls (the blurs stay on disk)
+        rain.release();
+        lastSlice = null;
         dockBand.setWallpaper(null);
         if (panel != null) panel.setWallpaper(null);
         if (sheet != null) sheet.setWallpaper(null);
         if (menu != null) menu.setWallpaper(null);
-        root.setBackground(new ColorDrawable(Ui.BG));
         strip.pause();
         // Public-API-only memory release: the Stick never sends UI_HIDDEN and the hidden GL trim is blocked on API 30.
         // Freed bitmaps are native memory that only a GC returns, so collect once the views have let go of them.
@@ -1159,7 +1251,7 @@ public class HomeActivity extends Activity {
         idleHandler.removeCallbacks(gcAfterStop);
         if (root == null || !released) return;
         released = false;
-        loadWallpaper();
+        if (skyActive) sky.restore(); else wallStack.restore();      // re-decode for Ambient.last(); onResume re-delivers rain
         topShelf.restore();
         for (int r = 0; r < rows.size(); r++) {
             TileRow row = rows.get(r);
@@ -1174,8 +1266,11 @@ public class HomeActivity extends Activity {
     @Override
     public void onTrimMemory(int level) {
         super.onTrimMemory(level);
-        if (art == null) return;
-        if (level >= TRIM_MEMORY_UI_HIDDEN) {
+        if (level >= TRIM_MEMORY_RUNNING_LOW && !released) {
+            Halo.clear();                       // re-baked on the next draw
+            if (sky != null) sky.trim();        // off-screen sky bakes + unwanted keyframes
+        }
+        if (art != null && level >= TRIM_MEMORY_UI_HIDDEN) {
             art.trim();
         }
     }

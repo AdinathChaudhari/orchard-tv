@@ -9,4 +9,6 @@
     <string name="safe_reset_settings">Reset Orchard settings</string>
     <string name="settings_title">Settings</string>
     <string name="dream_name">Orchard Clock</string>
+    <string name="weather_attribution">Weather data by Open-Meteo.com (CC BY 4.0)</string>
+    <string name="dream_hint">To use it as Fire TV\'s screensaver run: scripts/launcher.sh screensaver on</string>
 </resources>

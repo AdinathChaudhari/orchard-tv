@@ -21,7 +21,7 @@ import java.io.IOException;
  * Bundled / user wallpaper: sharp RGB_565 bitmap at screen size plus a 240x135 pre-blurred copy (stack blur,
  * radius Ui.GLASS_BLUR_RADIUS) cached on disk. The blurred copy is never upscaled into a bitmap: glass
  * painters draw it with a source rect and let the GPU scale it. Decoding runs off the main thread.
- * Names: dusk | ember | fog | black | user.
+ * Names: dusk | ember | fog | black | user | day (the light wall, WallStack). "sky" and unknown names map to Ui.NIGHT_WALL_DEFAULT.
  */
 public final class Wallpaper {
     /** Called on the main thread when a load() finished (sharp() / blurred() are then current). */
@@ -95,7 +95,7 @@ public final class Wallpaper {
         @Override
         public void run() {
             Result r = w.decode(name);
-            if (r == null) r = w.decode(Ui.DEFAULT_WALLPAPER);
+            if (r == null) r = w.decode(Ui.NIGHT_WALL_DEFAULT);
             if (r == null) r = new Result(null, w.blackBlur());
             w.main.post(new Publish(w, r, gen, cb));
         }
@@ -132,8 +132,23 @@ public final class Wallpaper {
         }
     }
 
+    /** Maps any wallpaper name onto one decode() can produce: "sky" (the Rev 6 default, which is no static wall) and unknown names become Ui.NIGHT_WALL_DEFAULT. */
+    static String normalName(String name) {
+        if ("user".equals(name) || "black".equals(name) || "day".equals(name)
+                || "dusk".equals(name) || "ember".equals(name) || "fog".equals(name)) return name;
+        return Ui.NIGHT_WALL_DEFAULT;
+    }
+
+    /** Background-thread helper: the 240x135 blurred copy of a static wall ("day" included), never null (falls back to the default night wall, then flat bg). */
+    Bitmap blurredSync(String name) {
+        Result r = decode(name);
+        if (r == null) r = decode(Ui.NIGHT_WALL_DEFAULT);
+        return r != null && r.blurred != null ? r.blurred : blackBlur();
+    }
+
     /** Returns null when this name cannot be produced (caller falls back to the default). */
-    private Result decode(String name) {
+    private Result decode(String rawName) {
+        String name = normalName(rawName);
         try {
             if ("black".equals(name)) return new Result(null, blackBlur());
             Bitmap src;
@@ -144,17 +159,16 @@ public final class Wallpaper {
                 stamp = f.lastModified();
                 len = f.length();
                 src = decodeUser(f);
-            } else if ("dusk".equals(name) || "ember".equals(name) || "fog".equals(name)) {
+            } else {
                 int id = R.drawable.wall_dusk;
                 if ("ember".equals(name)) id = R.drawable.wall_ember;
                 else if ("fog".equals(name)) id = R.drawable.wall_fog;
+                else if ("day".equals(name)) id = R.drawable.wall_day;
                 BitmapFactory.Options o = new BitmapFactory.Options();
                 o.inPreferredConfig = Bitmap.Config.RGB_565;
                 o.inScaled = false;
                 src = BitmapFactory.decodeResource(app.getResources(), id, o);
                 stamp = apkStamp();
-            } else {
-                return null;
             }
             if (src == null) return null;
             return new Result(src, blurFor(name, stamp, len, src));

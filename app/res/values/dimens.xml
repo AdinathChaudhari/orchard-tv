@@ -35,4 +35,12 @@
     <dimen name="text_body">29px</dimen>
     <dimen name="text_caption1">25px</dimen>
     <dimen name="text_caption2">23px</dimen>
+    <dimen name="wx_glyph">44px</dimen>
+    <dimen name="wx_clock_gap">56px</dimen>
+    <dimen name="glow_sun_size">720px</dimen>
+    <dimen name="glow_moon_size">360px</dimen>
+    <dimen name="rain_tile">384px</dimen>
+    <dimen name="list_view_h">860px</dimen>
+    <dimen name="dream_digit_h">560px</dimen>
+    <dimen name="dream_line_size">44px</dimen>
 </resources>

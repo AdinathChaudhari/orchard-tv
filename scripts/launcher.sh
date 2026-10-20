@@ -18,6 +18,8 @@
 #   shot [name]               screenshot into shots/<name>.png
 #   key KEY [KEY ...]         one `input keyevent` call
 #   perf [KEY ...]            gfxinfo reset, keys, gfxinfo + meminfo summary
+#   city <name> | city <lat> <lon> [label]   set the weather / sunset city live (DebugReceiver)
+#   screensaver on|off [--dry-run]   typed gate SCREENSAVER: Orchard Clock as Fire TV screensaver; off restores the snapshot (else Android Colors)
 #
 # Every TV command goes through scripts/tv.sh, which honours TV_HOST / TV_PORT.
 # --dry-run (or DRY_RUN=1) prints the TV-changing commands of the reset subcommands instead of running
@@ -27,14 +29,14 @@ set -eu
 
 SCRIPTS_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(dirname "$SCRIPTS_DIR")
-TV=$SCRIPTS_DIR/tv.sh
+TV=${LAUNCHER_TV:-$SCRIPTS_DIR/tv.sh}
 
 PKG=tv.orchard.home
 HOF=io.github.toolicious.homeonfire
 HOF_ID1="$HOF/.HijackService"
 HOF_ID2="$HOF/io.github.toolicious.homeonfire.HijackService"
 CONF=/sdcard/Android/data/$PKG/files/orchard.conf
-SNAP=$ROOT/backup/orchard-pre.txt
+SNAP=${LAUNCHER_SNAP:-$ROOT/backup/orchard-pre.txt}
 HOME_CMD='cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME'
 
 APP_DIR=$ROOT/app
@@ -44,7 +46,7 @@ REMOTE_APK=/data/local/tmp/orchard.apk
 B64PUSH=$ROOT/tools/adb/b64push.py
 PY=${ORCHARD_PYTHON:-$ROOT/.venv/bin/python}
 
-usage() { sed -n '4,22p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; }
+usage() { sed -n '4,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; }
 die() { printf 'launcher.sh: %s\n' "$*" >&2; exit 1; }
 
 # ---- shared TV helpers ---------------------------------------------------------------------------
@@ -123,6 +125,10 @@ cmd_install() {
   tv_expect Success "cmd package compile -m speed -f $PKG"
   echo "== deviceidle whitelist +"
   "$TV" "dumpsys deviceidle whitelist +$PKG"
+  # A fresh install leaves the Stick on the Amazon home, and Home on Fire redirects only when that home comes to the
+  # front: pressing Home from it stays put. Start Orchard once so the next Home press (from any app) lands here.
+  echo "== am start HomeActivity"
+  "$TV" "am start -n $PKG/.HomeActivity" >/dev/null || true
 }
 
 cmd_grant() {
@@ -209,6 +215,13 @@ cmd_status() {
   perm=$(tv_read "dumpsys package $PKG" | grep 'WRITE_SECURE_SETTINGS' || true)
   case "$perm" in *granted=true*) printf 'WRITE_SECURE_SETTINGS grant    = yes\n' ;;
                   *) printf 'WRITE_SECURE_SETTINGS grant    = no\n' ;; esac
+  perm=$(tv_read "dumpsys package $PKG" | grep -E 'android.permission.(WRITE_SECURE_SETTINGS|INTERNET)' || true)
+  printf 'uses-permission                = WRITE_SECURE_SETTINGS granted %s, INTERNET requested %s\n' \
+    "$(case "$perm" in *WRITE_SECURE_SETTINGS*granted=true*) echo yes ;; *) echo no ;; esac)" \
+    "$(case "$perm" in *android.permission.INTERNET*) echo yes ;; *) echo no ;; esac)"
+  printf 'screensaver_components         = %s\n' "$(tv_get 'settings get secure screensaver_components')"
+  printf 'screensaver_enabled            = %s\n' "$(tv_get 'settings get secure screensaver_enabled')"
+  printf 'orchard city                   = %s\n' "$(get_city)"
   printf 'focus                          = %s\n' "$(tv_read 'dumpsys window' | grep -m1 'mCurrentFocus' | sed 's/^[ \t]*//')"
   for p in "$HOF" "$PKG"; do
     printf 'pm path %-27s = %s\n' "$p" "$(tv_get "pm path $p")"
@@ -229,6 +242,15 @@ cmd_status() {
     *) ;;
   esac
   return 0
+}
+
+# Last data="..." of an am broadcast (empty when Orchard did not answer).
+bcast_data() { printf '%s\n' "$1" | sed -n 's/.*data="\([^"]*\)".*/\1/p' | sed -n 1p; }
+get_city() {
+  local out d
+  out=$("$TV" "am broadcast -f 0x20 -n $PKG/.DebugReceiver -a $PKG.GET_CITY" 2>/dev/null | tr -d '\r') || out=""
+  d=$(bcast_data "$out")
+  if [ -n "$d" ]; then printf '%s' "$d"; else printf 'unknown (Orchard not answering)'; fi
 }
 
 cmd_reset_to_stock() {
@@ -304,6 +326,81 @@ cmd_factory_stock() {
   cmd_status
 }
 
+# ---- city + screensaver (docs/PLAN.md 8.3, 8.4) ---------------------------------------------------
+
+cmd_city() {
+  local num='^-?[0-9]+([.][0-9]+)?$' id lat lon label="" cmd what out d form
+  [ $# -ge 1 ] || die "usage: city <name> | city <lat> <lon> [label]"
+  if [ $# -ge 2 ] && [[ $1 =~ $num ]] && [[ $2 =~ $num ]]; then
+    lat=$1; lon=$2; shift 2
+    awk -v a="$lat" -v b="$lon" 'BEGIN { exit !(a+0 >= -90 && a+0 <= 90 && b+0 >= -180 && b+0 <= 180) }' \
+      || die "out of range: lat must be -90..90 and lon -180..180 (got $lat $lon)"
+    if [ $# -gt 0 ]; then
+      label=$(printf '%s' "$*" | LC_ALL=C tr -cd 'A-Za-z0-9 .-' | cut -c1-24 | sed 's/[[:space:]]*$//')
+    fi
+    cmd="am broadcast -f 0x20 -n $PKG/.DebugReceiver -a $PKG.SET_CITY --es city_lat $lat --es city_lon $lon"
+    [ -z "$label" ] || cmd="$cmd --es city_name '$label'"
+    what="$lat,$lon${label:+ $label}"; form=coord
+  else
+    id=$(printf '%s' "$*" | LC_ALL=C tr 'A-Z' 'a-z' | LC_ALL=C tr -cd 'a-z0-9')
+    [ -n "$id" ] || die "empty city name. Use: launcher.sh city <name> | city <lat> <lon> [label]"
+    cmd="am broadcast -f 0x20 -n $PKG/.DebugReceiver -a $PKG.SET_CITY --es city_id $id"
+    what=$id; form=name
+  fi
+  if [ "${DRY_RUN:-0}" = 1 ]; then printf 'would run: %s\n' "$cmd"; return 0; fi
+  out=$("$TV" "$cmd" | tr -d '\r') || die "TV command failed (is the Stick reachable?)"
+  d=$(printf '%s\n' "$out" | sed -n 's/.*data="\(-\{0,1\}[0-9][0-9]*\)".*/\1/p' | sed -n 1p)
+  case "$d" in
+    1) printf 'city set: %s\n' "$what" ;;
+    0) printf 'city unchanged: %s\n' "$what" ;;
+    -1) if [ "$form" = name ]; then die "unknown city: $what. Use: launcher.sh city <lat> <lon> [label]"
+        else die "rejected by Orchard: $lat $lon"; fi ;;
+    *) die "no answer from Orchard (installed? run launcher.sh install)" ;;
+  esac
+}
+
+DREAM=$PKG/.ClockDream
+STOCK_DREAM=com.android.dreams.basic/com.android.dreams.basic.Colors
+ss_show() { printf '%s: screensaver_components = %s, screensaver_enabled = %s\n' "$1" \
+  "$(tv_get 'settings get secure screensaver_components')" "$(tv_get 'settings get secure screensaver_enabled')"; }
+
+cmd_screensaver() {
+  local mode=${1:-} svc comp en
+  case "$mode" in on|off) ;; *) usage; exit 2 ;; esac
+  if [ "$mode" = on ]; then
+    if [ "${DRY_RUN:-0}" != 1 ]; then
+      confirm SCREENSAVER "screensaver on: sets secure.screensaver_components to $DREAM and secure.screensaver_enabled to 1. Undo: launcher.sh screensaver off." || return 1
+    fi
+    if [ ! -f "$SNAP" ]; then
+      if [ "${DRY_RUN:-0}" = 1 ]; then printf 'note: no snapshot at %s; a real run takes one first (read-only)\n' "$SNAP" >&2
+      else cmd_snapshot || die "snapshot failed; screensaver off depends on it"; fi
+    fi
+    svc=$(tv_read 'cmd package query-services --brief -a android.service.dreams.DreamService')
+    case "$svc" in *"$DREAM"*) ;; *) die "ClockDream not found: install the current APK (launcher.sh install)" ;; esac
+    ss_show before
+    tv_write "settings put secure screensaver_components $DREAM"
+    tv_write "settings put secure screensaver_enabled 1"
+    if [ "${DRY_RUN:-0}" != 1 ]; then
+      [ "$(tv_get 'settings get secure screensaver_components')" = "$DREAM" ] || die "verify failed: screensaver_components did not take"
+      [ "$(tv_get 'settings get secure screensaver_enabled')" = 1 ] || die "verify failed: screensaver_enabled did not take"
+      ss_show after
+    fi
+  else
+    comp=$(snap_get secure.screensaver_components 2>/dev/null || true)
+    en=$(snap_get secure.screensaver_enabled 2>/dev/null || true)
+    if [ -z "$comp" ] || [ "$comp" = null ] || ! [[ $comp =~ ^[A-Za-z0-9_./\$:,-]+$ ]]; then
+      printf 'note: no usable screensaver_components in the snapshot; using Android Colors\n' >&2; comp=$STOCK_DREAM
+    fi
+    if ! [[ $en =~ ^[0-9]+$ ]]; then
+      printf 'note: no usable screensaver_enabled in the snapshot; using 1\n' >&2; en=1
+    fi
+    ss_show before
+    tv_write "settings put secure screensaver_components $comp"
+    tv_write "settings put secure screensaver_enabled $en"
+    [ "${DRY_RUN:-0}" = 1 ] || ss_show after
+  fi
+}
+
 # ---- dispatch ------------------------------------------------------------------------------------
 
 main() {
@@ -318,6 +415,8 @@ main() {
     build|test|push|install|grant|shot|key|perf) "cmd_$sub" "$@" ;;
     snapshot) cmd_snapshot "$@" ;;
     status) cmd_status ;;
+    city) cmd_city "$@" ;;
+    screensaver) cmd_screensaver "$@" ;;
     reset-to-stock) cmd_reset_to_stock ;;
     restore-home) cmd_restore_home ;;
     restore-settings) cmd_restore_settings ;;

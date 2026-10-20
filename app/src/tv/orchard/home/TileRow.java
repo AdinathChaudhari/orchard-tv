@@ -26,10 +26,16 @@ public class TileRow extends LinearLayout {
 
     // Shared per process, device scale. ALPHA_8: the Paint colour tints them when drawn.
     private static Bitmap shadowBmp, glowBmp;
+    private static float shadowBuiltA = -1f, contactBuiltA = -1f;   // the theme alphas shadowBmp was drawn with
 
     private final Paint shadowPaint = new Paint(Paint.FILTER_BITMAP_FLAG);
     private final Paint glowPaint = new Paint(Paint.FILTER_BITMAP_FLAG);
     private final Paint labelPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint haloScratch = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private boolean themeApplied;
+    private boolean appliedLight;
+    private float appliedTs, appliedTn;
+    private int labelRgb = 0xFFFFFF;                                    // Theme.rise(text), no alpha
     private final RectF rect = new RectF();
     private final RectF dst = new RectF();
     private float labelAscent;
@@ -47,29 +53,32 @@ public class TileRow extends LinearLayout {
         setChildrenDrawingOrderEnabled(true);
         setWillNotDraw(false);
         ensureBitmaps();
-        shadowPaint.setColor(0xFF000000);
+        shadowPaint.setColor(0xFF000000 | (Theme.cur().dropRgb & 0xFFFFFF));
         labelPaint.setTypeface(Ui.medium());
         labelPaint.setTextSize(Ui.pxf(Ui.T_BODY));
         labelPaint.setLetterSpacing(Ui.tracking(Ui.T_BODY));
         labelPaint.setTextAlign(Paint.Align.CENTER);
-        labelPaint.setShadowLayer(Ui.pxf(Ui.FLABEL_SHADOW_BLUR), 0, Ui.pxf(Ui.FLABEL_SHADOW_DY), Ui.FLABEL_SHADOW_COLOR);   // mockup #flabel text-shadow
+        paintLabelTheme();
         labelAscent = labelPaint.getFontMetrics().ascent;                 // negative
     }
 
     // ---- shared bitmaps -----------------------------------------------------------------------------
 
     private static synchronized void ensureBitmaps() {
-        if (shadowBmp == null) {
+        Theme thm = Theme.cur();
+        if (shadowBmp == null || shadowBuiltA != thm.shadowAlpha || contactBuiltA != thm.contactAlpha) {
             int pad = Ui.px(Ui.SHADOW_BITMAP_PAD), tw = Ui.px(Ui.TILE_W), th = Ui.px(Ui.TILE_H);
             Bitmap b = Bitmap.createBitmap(tw + pad, th + pad, Bitmap.Config.ALPHA_8);
             Canvas c = new Canvas(b);
             RectF r = new RectF();
             float x0 = pad / 2f, y0 = pad / 2f;
             r.set(x0, y0 + Ui.pxf(Ui.SHADOW_Y), x0 + tw, y0 + Ui.pxf(Ui.SHADOW_Y) + th);
-            blurredRoundRect(c, r, Ui.SHADOW_BLUR, Ui.SHADOW_ALPHA);
+            blurredRoundRect(c, r, Ui.SHADOW_BLUR, thm.shadowAlpha);
             r.set(x0, y0 + Ui.pxf(Ui.CONTACT_Y), x0 + tw, y0 + Ui.pxf(Ui.CONTACT_Y) + th);
-            blurredRoundRect(c, r, Ui.CONTACT_BLUR, Ui.CONTACT_ALPHA);
+            blurredRoundRect(c, r, Ui.CONTACT_BLUR, thm.contactAlpha);
             shadowBmp = b;
+            shadowBuiltA = thm.shadowAlpha;
+            contactBuiltA = thm.contactAlpha;
         }
         if (glowBmp == null) {
             int pad = Ui.px(Ui.GLOW_BITMAP_PAD), tw = Ui.px(Ui.TILE_W), th = Ui.px(Ui.TILE_H);
@@ -90,12 +99,47 @@ public class TileRow extends LinearLayout {
         c.drawRoundRect(r, rad, rad, p);
     }
 
+    // ---- theme --------------------------------------------------------------------------------------
+
+    private void paintLabelTheme() {
+        Theme t = Theme.cur();
+        labelRgb = Theme.rise(t.text) & 0xFFFFFF;
+        if ((t.titleShadow >>> 24) == 0) {
+            labelPaint.clearShadowLayer();
+        } else {                                                        // mockup #flabel: text-shadow 0 1px 12px (CSS sigma = blur / 2)
+            float sigma = Ui.pxf(12) / 2f;
+            labelPaint.setShadowLayer(Math.max(1f, (sigma - 0.5f) / 0.57735f), 0f, Ui.pxf(Ui.FLABEL_SHADOW_DY), t.titleShadow);
+        }
+    }
+
+    /**
+     * Theme tokens changed (Theme.set already ran): label ink, shadow tint, shadow bitmap alphas, glow tint (the
+     * tiles recompute it), then every tile. Cheap and idempotent (key = light + ts + tn).
+     */
+    public void applyTheme() {
+        Theme t = Theme.cur();
+        if (themeApplied && appliedLight == t.light && appliedTs == Theme.ts() && appliedTn == Theme.tn()) return;
+        themeApplied = true;
+        appliedLight = t.light;
+        appliedTs = Theme.ts();
+        appliedTn = Theme.tn();
+        ensureBitmaps();                                                // redraws the shared shadow only when its alphas changed
+        shadowPaint.setColor(0xFF000000 | (t.dropRgb & 0xFFFFFF));
+        paintLabelTheme();
+        for (int i = 0, n = getChildCount(); i < n; i++) {
+            View c = getChildAt(i);
+            if (c instanceof TileView) ((TileView) c).applyTheme();
+        }
+        invalidate();
+    }
+
     // ---- population ---------------------------------------------------------------------------------
 
     public void addTile(TileView t) {
         LayoutParams lp = new LayoutParams(Ui.px(Ui.TILE_W), Ui.px(Ui.TILE_H));
         if (getChildCount() > 0) lp.leftMargin = Ui.px(Ui.GUTTER);
         addView(t, lp);
+        t.applyTheme();                                                 // no-op when it already follows the live theme
     }
 
     public TileView tileAt(int i) {
@@ -259,7 +303,7 @@ public class TileRow extends LinearLayout {
             float gw = glowBmp.getWidth() * k, gh = glowBmp.getHeight() * k;
             float gy = cy + Ui.pxf(Ui.GLOW_Y) * k;
             dst.set(cx - gw / 2f, gy - gh / 2f, cx + gw / 2f, gy + gh / 2f);
-            glowPaint.setColor(Ui.argb(Math.min(1f, t.glowAlpha() * p), t.glowColor()));
+            glowPaint.setColor(Ui.argb(Math.min(1f, t.themedGlowAlpha() * p), t.themedGlowColor()));
             canvas.drawBitmap(glowBmp, null, dst, glowPaint);
 
             float sw = shadowBmp.getWidth() * k, sh = shadowBmp.getHeight() * k;
@@ -280,13 +324,13 @@ public class TileRow extends LinearLayout {
                 float p = Math.min(1f, t.focusProgress());
                 if (p <= 0f) continue;
                 childRect(c, rect);
-                labelPaint.setColor(Ui.argb(p, 0xFFFFFF));
+                labelPaint.setColor(Ui.argb(p, labelRgb));
                 float rise = t.usesReducedFade() ? 0f : (1f - p) * Ui.pxf(Ui.LABEL_RISE);   // reduced: alpha only
-                canvas.drawText(t.label(), rect.centerX(), rect.bottom + gap + rise - labelAscent, labelPaint);
+                Halo.drawText(canvas, t.label(), rect.centerX(), rect.bottom + gap + rise - labelAscent, labelPaint, haloScratch);
             } else if (labelsAlways && !t.isFireTvHome()) {
-                labelPaint.setColor(Ui.argb(Ui.LABEL_ALWAYS_ALPHA, 0xFFFFFF));
+                labelPaint.setColor(Ui.argb(Ui.LABEL_ALWAYS_ALPHA, labelRgb));
                 float cx = c.getLeft() + c.getWidth() / 2f;
-                canvas.drawText(t.label(), cx, c.getBottom() + gap - labelAscent, labelPaint);
+                Halo.drawText(canvas, t.label(), cx, c.getBottom() + gap - labelAscent, labelPaint, haloScratch);
             }
         }
     }

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Orchard Phase 0.1: original wallpapers + placeholder banners (no real logos)."""
-import colorsys, json, shutil
+import colorsys, json, shutil, sys
 from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -22,6 +22,19 @@ def wallpaper(a, b, w=1920, h=1080):
     t = np.clip(t, 0, 1)[..., None] ** 0.9
     img = hexc(a) * (1 - t) + hexc(b) * t
     img += rng.normal(0, 255 * 0.015, img.shape)  # ~1.5% noise
+    return Image.fromarray(np.clip(img, 0, 255).astype(np.uint8))
+
+def wallpaper_day(w=1920, h=1080):
+    """Rev 4 light theme: warm white (top-left) to pale cool grey (bottom-right), a soft warm bloom top-left,
+    a faint cool pool bottom-right, 1.2% noise. Light vignette is added by the mockup, as for the dark walls."""
+    y, x = np.mgrid[0:h, 0:w]
+    t = np.clip(x / w * 0.45 + y / h * 0.55, 0, 1)[..., None] ** 0.95
+    img = hexc("#F7F3EB") * (1 - t) + hexc("#D8DDE6") * t
+    def blob(cx, cy, rx, ry, col, amt):
+        d = np.sqrt(((x / w - cx) / rx) ** 2 + ((y / h - cy) / ry) ** 2)[..., None]
+        return np.clip(1 - d, 0, 1) ** 2 * amt * (hexc(col) - img)
+    img = img + blob(0.22, 0.12, 0.55, 0.7, "#FFF8EC", 0.55) + blob(0.85, 0.95, 0.5, 0.6, "#CBD3E0", 0.35)
+    img += rng.normal(0, 255 * 0.012, img.shape)
     return Image.fromarray(np.clip(img, 0, 255).astype(np.uint8))
 
 FONTS = ["/System/Library/Fonts/Helvetica.ttc", "/System/Library/Fonts/SFNS.ttf", "/Library/Fonts/Arial.ttf"]
@@ -85,7 +98,15 @@ def vivid(im):
         if sc > score: best, score = px, sc
     return "#%02x%02x%02x" % best
 
+def day_only():
+    p = WALL / "day.webp"
+    wallpaper_day().save(p, "WEBP", quality=82)
+    shutil.copy(p, RES / "wall_day.webp")
+    print("ok day wallpaper")
+
 def main():
+    if "--day-only" in sys.argv:
+        return day_only()
     for name, (a, b) in WALLS.items():
         p = WALL / f"{name}.webp"
         wallpaper(a, b).save(p, "WEBP", quality=80)
@@ -96,6 +117,7 @@ def main():
         im.save(BAN / f"{slug}.png")
         colors[slug] = vivid(im)
     (BAN / "colors.json").write_text(json.dumps(colors, indent=2) + "\n")
+    day_only()   # last, so the seeded noise of the dark walls above is unchanged
     print("ok", len(WALLS), "wallpapers,", len(BANNERS), "banners")
 
 if __name__ == "__main__":

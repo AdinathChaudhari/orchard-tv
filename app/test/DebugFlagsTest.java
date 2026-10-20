@@ -91,6 +91,20 @@ public final class DebugFlagsTest {
             fails++;
             System.err.println("FAIL DebugFlagsTest exception " + e);
         }
+        eq("time 06:00", "360", String.valueOf(DebugFlags.timeMinute("06:00")));
+        eq("time 23:59", "1439", String.valueOf(DebugFlags.timeMinute(" 23:59 ")));
+        eq("time 00:00", "0", String.valueOf(DebugFlags.timeMinute("00:00")));
+        eq("time 24:00 bad", "-1", String.valueOf(DebugFlags.timeMinute("24:00")));
+        eq("time 12:60 bad", "-1", String.valueOf(DebugFlags.timeMinute("12:60")));
+        eq("time 6:00 bad", "-1", String.valueOf(DebugFlags.timeMinute("6:00")));
+        eq("time null", "-1", String.valueOf(DebugFlags.timeMinute(null)));
+        eq("wx clear", "0", String.valueOf(DebugFlags.wxCode("clear")));
+        eq("wx cloudy", "3", String.valueOf(DebugFlags.wxCode("Cloudy")));
+        eq("wx rain", "63", String.valueOf(DebugFlags.wxCode("rain")));
+        eq("wx fog", "45", String.valueOf(DebugFlags.wxCode("fog")));
+        eq("wx bogus", "-1", String.valueOf(DebugFlags.wxCode("snow")));
+        eq("wx rain is raining", "true", String.valueOf(WeatherParse.raining(DebugFlags.wxCode("rain"))));
+        eq("wx fog is haze", String.valueOf(WeatherParse.WX_HAZE), String.valueOf(WeatherParse.condition(DebugFlags.wxCode("fog"))));
         if (fails > 0) { System.err.println(fails + " failure(s)"); System.exit(1); }
     }
 }

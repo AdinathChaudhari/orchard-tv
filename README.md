@@ -16,7 +16,7 @@ Social preview: docs/media/hero-glass.jpg (git-ignored), made with Tools/image_c
 
 <p align="center"><img src="docs/media/hero.png" alt="orchard-tv: a small character picking a glowing app tile from an orchard branch inside a TV" width="720"></p>
 
-The detox (`scripts/detox.sh`) switches off ad tracking, Amazon's ad-showing screensaver, telemetry and preloaded bloatware, and points the Stick at AdGuard's ad-blocking DNS. Orchard (`tv.orchard.home`) then replaces the home screen with a Top Shelf, a dock, an app grid, a Quick Panel and a clock screensaver. It asks for no network access, takes about 280 KB, and never reads Amazon's recommendations, so none are shown.
+The detox (`scripts/detox.sh`) switches off ad tracking, Amazon's ad-showing screensaver, telemetry and preloaded bloatware, and points the Stick at AdGuard's ad-blocking DNS. Orchard (`tv.orchard.home`) then replaces the home screen with a Top Shelf, a dock, an app grid, a Quick Panel, a time-of-day sky with light and dark themes, a weather chip and a giant-clock screensaver. Its one network call is an optional weather request to Open-Meteo that sends only your city's coordinates (switch it off in Settings). It takes about 1.4 MB and never reads Amazon's recommendations, so none are shown.
 
 ## The map
 
@@ -26,6 +26,9 @@ The detox (`scripts/detox.sh`) switches off ad tracking, Amazon's ad-showing scr
 | **Remove** bloatware | [`scripts/detox.sh`](scripts/detox.sh) `debloat` | 33 listed Amazon packages: 27 disabled, 6 that Fire OS protects restricted by `background` ([list](config/debloat.txt)); nothing deleted |
 | **Stop** tracking | [`scripts/detox.sh`](scripts/detox.sh) `privacy` | Ad-tracking limits on; interest-based ads, usage data and metrics upload off |
 | **Replace** the home screen | [`app/`](app/) + [`scripts/launcher.sh`](scripts/launcher.sh) `install` | Plain Java, host tests first, then a signed `orchard.apk` installed over Wi-Fi adb |
+| **Watch** the sky change | [`app/`](app/) | Wallpaper follows the real sun for your city; light theme by day, dark by night; weather chip with a rain note |
+| **Move** to another city | TV Settings > City, or [`scripts/launcher.sh`](scripts/launcher.sh) `city` | Pick from a list, or `city Pune`, or `city <lat> <lon> [label]`; applies live |
+| **Dim** the TV with a clock | [`scripts/launcher.sh`](scripts/launcher.sh) `screensaver on` / `off` | Giant thin clock on black; type `SCREENSAVER` to confirm; `off` restores your snapshot |
 | **Go back** to stock | [`scripts/launcher.sh`](scripts/launcher.sh) `factory-stock` / `reset-to-stock` | Redirect off and Amazon's home open; `factory-stock` also runs `detox.sh undo all` |
 | **Preview** in a browser | [`mockup/`](mockup/) | Open `mockup/index.html`; placeholder art, same layout |
 
@@ -72,9 +75,9 @@ $ scripts/detox.sh status
 $ app/build.sh
 == host tests
 PASS DebugFlagsTest
-PASS ShelfTextTest
+PASS SolarTest
 ...
-built app/build/orchard.apk  279669 bytes  1 uses-permission entries
+built app/build/orchard.apk  1465712 bytes  permissions: android.permission.INTERNET android.permission.WRITE_SECURE_SETTINGS
 
 $ scripts/launcher.sh install
 == pm install -r
@@ -129,7 +132,7 @@ The detox has seven layers, each runnable alone (`scripts/detox.sh <layer>`) and
 
 `config/never-disable.txt` (launcher, platform, input, SystemUI, Settings, providers, Bluetooth) is refused on every disable path, and the typed gates `DEBLOAT`, `UPDATES` and `DETOX` stop a stray run. `detox.sh status` is read-only.
 
-Fire OS ignores third-party Home apps, so Orchard cannot be chosen as the default launcher. [Home on Fire](https://github.com/toolicious/home-on-fire) (GPLv3, installed separately, never copied here) watches for Amazon's home opening through an accessibility service and redirects to Orchard. Orchard's only permission, `WRITE_SECURE_SETTINGS`, lets its own reset sheet switch that redirect off. The reset tools work in layers, so one failure never strands you:
+Fire OS ignores third-party Home apps, so Orchard cannot be chosen as the default launcher. [Home on Fire](https://github.com/toolicious/home-on-fire) (GPLv3, installed separately, never copied here) watches for Amazon's home opening through an accessibility service and redirects to Orchard. Orchard asks for two permissions: `WRITE_SECURE_SETTINGS`, which lets its own reset sheet switch that redirect off, and `INTERNET`, used only for the weather request below. The reset tools work in layers, so one failure never strands you:
 
 | Reset layer | Where | What it does |
 |---|---|---|
@@ -147,6 +150,43 @@ scripts/tv.sh 'am broadcast -n tv.orchard.home/.DebugReceiver --es unset debug_a
 ```
 
 The nonce is required on a cold start: Android replays `am start` extras as the task's root intent after the process dies, so Orchard ignores extras in `onCreate` unless the nonce is new. A broadcast is never replayed.
+
+---
+
+## Sky, weather and clock
+
+The wallpaper is a sky chosen by the sun's elevation over your city, computed on the TV with the NOAA solar algorithm (no network). Ten pre-rendered frames cross-fade through dawn, day, golden hour, dusk and night, with a soft sun or moon glow. The interface flips between a light and a dark theme around sunrise and sunset, and the Top Shelf greets you by time of day. Settings > Theme chooses Auto (sunset), Light or Dark. Everything moves by alpha and translate only, so a still home screen redraws nothing except the minute tick.
+
+### A day on Orchard
+
+<p align="center"><img src="docs/media/screenshot-real-day-strip.jpg" alt="The same home screen at seven times of day, from a dark violet dawn through pale noon and an orange sunset to a deep blue night" width="880"></p>
+<p align="center"><em>One city, seven moments from 06:00 to 22:00: the sky follows the sun and the interface flips between dark and light.</em></p>
+
+<p align="center"><img src="docs/media/screenshot-real-rain-day.gif" alt="Rain falling over the home screen while the sky steps through seven times of day" width="640"></p>
+<p align="center"><em>Slow raindrops, only while it rains, over each of the seven times of day.</em></p>
+
+<p align="center"><img src="docs/media/screenshot-real-tour.gif" alt="Focus moving along the dock from Netflix to YouTube, JioHotstar and Apple TV, with the Top Shelf glow taking each app's colour" width="640"></p>
+<p align="center"><em>Focus moves along the dock and the Top Shelf glow takes the colour of each app.</em></p>
+
+<table align="center">
+  <tr>
+    <td><img src="docs/media/screenshot-real-panel-light.jpg" alt="Quick Panel over the light daytime theme" width="430"></td>
+    <td><img src="docs/media/screenshot-real-settings-dark.jpg" alt="Settings in the dark night theme" width="430"></td>
+  </tr>
+  <tr>
+    <td align="center"><em>Quick Panel at noon, light theme.</em></td>
+    <td align="center"><em>Settings at night, dark theme.</em></td>
+  </tr>
+</table>
+
+<p align="center"><img src="docs/media/clock.jpg" alt="The giant thin 24-hour clock on black showing 22:00, with the date, temperature and city underneath" width="640"></p>
+<p align="center"><em>The clock screensaver: the real Fire TV screensaver, running on the Stick.</em></p>
+
+- **Weather.** A chip shows the temperature, today's high and low and the sunset time. When rain is likely a short note appears and slow raindrops fall (only while it rains), and cloud or rain dims the sky one step. Data comes from [Open-Meteo](https://open-meteo.com/) (CC BY 4.0, no key, no account): one request on a background thread at most every 30 minutes, cached on the TV. **What is sent: only your city's coordinates, rounded to about 1 km.** Offline, the chip simply hides. Turn it off in Settings > Weather.
+- **City.** The default is Bengaluru. Change it in Settings > City, or from the Mac: `scripts/launcher.sh city Pune` for a listed city, or `scripts/launcher.sh city 51.5072 -0.1276 London` for any place. It applies live, with no restart.
+- **Clock screensaver.** A giant thin 24-hour clock on black that drifts a few pixels each minute against burn-in and dims after ten minutes. Orchard Clock replaces Android's plain Colors screensaver once you run `scripts/launcher.sh screensaver on` (type `SCREENSAVER`); `screensaver off` restores your snapshot, or Android's Colors.
+
+Sunrise and sunset use the NOAA solar position equations; weather is by Open-Meteo. Details are in [docs/PLAN.md](docs/PLAN.md) (Revs 4 to 6).
 
 ---
 
@@ -180,6 +220,9 @@ No. Those ads are stitched into the stream or served from the video's own domain
 **How do I go back to Fire TV?**
 Use Settings > Return to Fire TV in Orchard, long-press Home on the remote, or run `scripts/launcher.sh reset-to-stock`. `factory-stock` also restores the saved settings, re-enables the debloated packages and removes Orchard.
 
+**Does Orchard use the network?**
+One optional request: the weather chip asks Open-Meteo for the forecast at your city's coordinates, at most every 30 minutes, with nothing else attached. Settings > Weather off stops it. Nothing else leaves the TV.
+
 **Is the UI 4K or 1080p?**
 The Stick renders at 1920x1080 and scales to a 4K panel, so Orchard is laid out for 1080p.
 
@@ -202,11 +245,13 @@ orchard-tv exists because these projects did the hard research first. Thank you.
 | [AdGuard DNS](https://adguard-dns.io/) | The default ad-blocking DNS filter for the `dns` layer | service |
 | [hagezi/dns-blocklists](https://github.com/hagezi/dns-blocklists) | Research on Amazon's tracker domains (nothing copied) | GPL-3.0 |
 | [Projectivy Launcher](https://play.google.com/store/apps/details?id=com.spocky.projengmenu) by spocky | UX reference; closed source, nothing copied | reference only |
-| [Inter](https://github.com/rsms/inter) by Rasmus Andersson | Orchard's typeface | SIL OFL |
+| [Inter](https://github.com/rsms/inter) by Rasmus Andersson | Orchard's typeface (Regular, Medium, SemiBold and Thin subsets) | SIL OFL |
+| [Open-Meteo](https://open-meteo.com/) | Weather data for the chip; attribution shown in Settings | CC BY 4.0 |
+| [NOAA solar calculator](https://gml.noaa.gov/grad/solcalc/calcdetails.html) | The sunrise, sunset and solar-elevation equations behind `Solar.java` (reimplemented, no code copied) | public domain |
 | [Apple tvOS Human Interface Guidelines](https://developer.apple.com/design/human-interface-guidelines/designing-for-tvos) | Design reference only; no Apple assets used | reference only |
 
 See [`THIRD_PARTY_NOTICES.txt`](THIRD_PARTY_NOTICES.txt) for licence texts.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Not affiliated with Apple or Amazon. App names and logos in the screenshots belong to their owners and appear only to show the launcher with real apps. Apple TV and Fire TV are trademarks of their owners. No real app logos are redistributed; the mockup and screenshots use generated placeholders.
+MIT — see [LICENSE](LICENSE). Not affiliated with Apple or Amazon. App names and logos in the screenshots belong to their owners and appear only to show the launcher with real apps. Apple TV and Fire TV are trademarks of their owners. The mockup and the `docs/media/screenshot-*.png` captures use generated placeholder art; real logos appear only in the `docs/media/screenshot-real-*` captures and are not shipped in the app.

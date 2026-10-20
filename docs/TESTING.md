@@ -7,13 +7,39 @@ identifiers) is not published. Numbers below are from that log.
 ## Host tests
 
 `app/build.sh` compiles the pure-Java classes with `-Werror` and runs every `app/test/*Test.java` (plain `main()`
-asserts) before building. 10 test classes, all PASS on the final build. The build then produces a signed
-`orchard.apk` (about 276-280 KB) and fails unless it declares exactly one permission (`WRITE_SECURE_SETTINGS`).
+asserts) before building. 23 test classes, all PASS on the final build. The build then produces a signed
+`orchard.apk` (1,465,712 bytes on the final build; budget 1.6 MB) and fails unless it declares exactly two permissions (`WRITE_SECURE_SETTINGS` and `INTERNET`, the latter for the optional weather request). `tests/launcher_cmd_test.sh` (24 checks on the `city` and `screensaver` commands) and `tests/detox_guard_test.sh` also pass.
 
 Mutation checks were run on the first three test classes (redirect-list handling, crash window, config parsing):
 each deliberate bug in the code under test had to be caught. Two mutants survived the first round (crash-file
 length cap, comment-line parsing); a test was added for each and the re-run caught them. The tests also found one
 real bug (a junk line in the crash file left a phantom entry).
+
+## Sky, weather, city and clock (Revs 4 to 6)
+
+New pure-Java classes each have a host test: `Solar` (checked against fixed astral values for Bengaluru on 2026-10-20: sunrise 06:10:44, sunset 17:57:56, noon elevation 66.67 degrees), `SkyPhase`, `ThemePhase`, a one-day sky table test, `Greeting`, `RainText`, `ClockFormat` (including worst-case ink margins at the largest drift, never under the 96 px overscan), `CityCommand`, and `WeatherParse` against a recorded Open-Meteo JSON fixture (including WMO codes 94, 95 and 96 at the rain boundary). A scratch mutation of that boundary made the test fail; the unmutated control passed. The Mac-side contrast gate (`tools/check_contrast.py`) checks every sky and weather state.
+
+## Overnight verification on the Stick (2026-10-20)
+
+Run in two rounds on the same Stick, after checking that no real playback was active. All PASS unless noted.
+
+| Check | Result |
+|---|---|
+| Install | `launcher.sh install` succeeded; both permissions granted |
+| Home | Fire TV Settings, then Home, opened Orchard 5/5 with real logos, live night sky and the weather chip (Open-Meteo fetch ok) |
+| Pinned times | `debug_time` 06:00, 12:00, 18:10, 22:00 clear, 10:00 rain, 07:00 fog: header clock, greeting, caption and theme all follow the pinned time; no restart on `unset` |
+| City | `city Pune`, then `city Bengaluru`, applied live in the same process; temperatures matched the host's Open-Meteo reading |
+| Reset | Return to Fire TV opens Amazon's home and Home stays there; "Turn redirect on" restores the saved list and Home opens Orchard again |
+| Clock screensaver | Started by the system idle path and by the dream route; one process, Back returns to Home, no crash; the clock drifted between minutes |
+| Cold start | 733-788 ms through the Home on Fire relaunch path (under 1 s) |
+| Idle | 2 frames in 30 s |
+| Rain | 299-300 frames per 10 s, 0-0.3 % janky after settling |
+| Memory | 84.7 MB PSS at the end of the session |
+| End state | Redirect entry present, accessibility on, grant present, crash guard armed, Home opens Orchard |
+
+The README sky, rain, tour, Quick Panel, Settings and clock images are real captures from this run, cropped, scaled and encoded only. The night Settings capture shows the real clock in its header, because Settings ignores `debug_time`.
+
+Open items: dock jank of 6-11 % at 18:10 under a spaced 10-key loop (0 % by the standard method; suspected per-frame shadow layer on stroked icons); foreground memory can pass 120 MB under repeated pinned-time switching, and any app round trip releases it to about 81-85 MB; Quick Panel overlaps the "Fire TV home active" pill when the redirect is off. ClockDream is the active Fire TV screensaver on the test Stick (set during overnight verification; `scripts/launcher.sh screensaver off` reverts).
 
 ## Phases
 
@@ -23,7 +49,7 @@ real bug (a junk line in the crash file left a phantom entry).
 | 2 Install and reset tooling | passed | passed (R0-R8, R6b, R10 reboot); R9 needs the physical remote |
 | 3 Home screen core | passed | passed |
 | 4 Top Shelf and motion | passed | passed |
-| 5 Quick Panel, Settings, menu, screensaver | passed | passed; system-screensaver check left to the owner |
+| 5 Quick Panel, Settings, menu, screensaver | passed | passed; ClockDream verified as the system screensaver (idle path + Somnambulator) |
 | 6 Switch-over | passed | passed (redirect target set to Orchard, crash failsafe, reboot) |
 
 ## Performance (final build)

@@ -2,17 +2,17 @@
 
 The whole Fire TV kit: a detox (ad blocking, tracking off, bloatware disabled, ad-blocking DNS; `scripts/detox.sh`) plus
 Orchard (`tv.orchard.home`), an Apple TV-style home-screen launcher for a Fire TV Stick (Fire OS 8, API 30), and the Mac
-tools to build it, install it and reset the Stick to Amazon's home. Public, MIT. Plain Java, no Gradle, no libraries.
+tools to build it, install it and reset the Stick to Amazon's home. Public, MIT. Plain Java, no Gradle, no libraries. The APK is about 1.4 MB (budget 1.6 MB).
 
 ## Layout
 
 - `app/` Android app. `src/tv/orchard/home/`, `res/`, `test/` (host tests), `build.sh`, `version.env`.
-- `tools/` `env.sh` (finds JDK 17+ and the SDK), `make_wallpapers.py` (Pillow/numpy), `subset_fonts.sh` (fonttools),
+- `tools/` `env.sh` (finds JDK 17+ and the SDK), `make_wallpapers.py` (Pillow/numpy), `make_sky.py` (the Rev 6 sky keyframes, glow and rain tiles into `mockup/wall/`), `check_contrast.py` (WCAG gate incl. the sky; ~25 min, `--static` skips the render sweeps), `check_sky_handover.py` (a live minute step never flashes the sky; ~2 min), `export_sky_assets.py` (mockup sky frames into `app/res`), `subset_fonts.sh` (fonttools; Inter Thin included),
   `adb/` (`tv.py`, `b64push.py`, `requirements.txt`; adapted from tv-vibehack, MIT).
 - `scripts/` `detox.sh` (snapshot, privacy, screensaver, background, dns, debloat, updates, status, undo), `launcher.sh`
-  (build, install, status, reset), `tv.sh` (one adb shell command).
+  (build, install, status, reset, `city`, `screensaver on|off`), `tv.sh` (one adb shell command).
 - `config/` `debloat.txt` (packages to disable), `never-disable.txt` (refused on every disable path).
-- `tests/` `detox_guard_test.sh` (host-only: guard refusals, list intersection, fake-TV end to end).
+- `tests/` `detox_guard_test.sh` (host-only: guard refusals, list intersection, fake-TV end to end), `launcher_cmd_test.sh` (dry-run checks of `city` and `screensaver`).
 - `mockup/` HTML preview of the design. `real-art.js` must stay `false`; `banners-real/` is git-ignored and never committed.
 - `docs/` DETOX.md (the detox guide), PLAN.md (historical spec), TESTING.md (scrubbed results), learnings.md, research/.
 
@@ -26,8 +26,27 @@ scripts/launcher.sh snapshot && scripts/launcher.sh install && scripts/launcher.
 scripts/launcher.sh status                               # read-only
 ```
 
+After `install` the Stick shows the Amazon home; `install` ends by starting Orchard once, because Home on Fire redirects only when that home comes to the front (Home pressed *from* it stays put).
+
 `scripts/tv.sh` needs `TV_HOST` (env or `.env`); it has no default. The adb key is `ORCHARD_ADB_KEY` (default
 `~/.android/adbkey`). Use `tv.sh`, never a bare `adb connect` (a second key means a second "Allow" prompt).
+
+## Sky, weather and city (Revs 4 to 6; spec in docs/PLAN.md sections 7 to 9)
+
+- Pure Java, host-tested (marked `PURE JAVA`, no `android.*`): `Solar` (NOAA rise, set, elevation), `SkyPhase`, `ThemePhase`, `Greeting`, `RainText`, `ClockFormat`, `CityCommand`, `WeatherParse`, `Cities`. Android side: `SkyView`, `SkyAssets`, `WallStack`, `RainLayer`, `Halo`, `Theme`, `Ambient`, `AmbientState`, `WeatherClient`, `WxGlyph`, `ClockDream`.
+- Data: `res/raw/cities.csv` (one city table, Bengaluru first and default), 20 sky webps plus sun, moon and rain tiles in `res/drawable-nodpi`, `res/font/inter_thin.ttf`, `app/test/fixtures/open-meteo-bengaluru.json`.
+- Numbers come from `mockup/tokens.css` into `Ui.java` / `Theme.java`; the mockup is the visual contract. Retune a token in both places, then run `tools/check_contrast.py`.
+- Debug flags (same intent and broadcast channel as the others): `debug_time=HH:MM` pins every time-derived element (header clock, greeting, sky, theme, sunrise/sunset caption, chip glyph, screensaver clock; the date stays real), `debug_wx=clear|cloudy|rain|fog` overrides the weather code (temperature stays real), `debug_offline=1` fakes a failed fetch (chip hides). Clear them with `orchard.debug_clear`, with a fresh nonce, before the last screenshot.
+- City: `scripts/launcher.sh city <name>|<lat> <lon> [label]` is a DUMP-guarded `SET_CITY` broadcast to `DebugReceiver`; `CityCommand` validates it (label stripped to letters, digits, space, `.`, `-`, `'`). `screensaver on` needs the typed word `SCREENSAVER`; `off` restores the snapshot, else Android Colors.
+- Idle rule: no redraws except the minute tick and the slow rain layer (only while raining). Alpha and translate only, pre-rendered bitmaps, no `RenderEffect`, no animated colour.
+
+## Network rules
+
+1. Orchard declares exactly two permissions, `WRITE_SECURE_SETTINGS` and `INTERNET`; `build.sh` fails on anything else. Do not add a third.
+2. The only outbound call is `WeatherClient` to Open-Meteo `api.open-meteo.com` over HTTPS: coordinates rounded to 2 decimals, no key, no identifiers, no other host, no analytics.
+3. Run it on a background thread with timeouts; never block the UI. Refetch at most every 30 minutes, cache in `getFilesDir()`, and on any failure hide the chip.
+4. Settings > Weather off must stop all requests. Keep the Open-Meteo attribution (CC BY 4.0) in Settings and `THIRD_PARTY_NOTICES.txt`.
+5. The README privacy wording is "one optional weather call"; keep it true if the network use ever changes.
 
 ## Detox safety rules
 
@@ -58,7 +77,7 @@ scripts/launcher.sh status                               # read-only
 
 ## Public-repo rules
 
-No private IPs, absolute home paths, emails, adb keys, device snapshots (`backup/`), raw device logs, or real app logos outside `docs/media/screenshot-real-*.jpg` (the user approved real-app screenshots for the README on 2026-10-20; `mockup/banners-real/` stays git-ignored).
+No private IPs, absolute home paths, emails, adb keys, device snapshots (`backup/`), raw device logs, or real app logos outside `docs/media/screenshot-real-*.{jpg,gif}` (the user approved real-app screenshots for the README on 2026-10-20; `mockup/banners-real/` stays git-ignored).
 Before every commit, grep the tree (not git-ignored dirs only) for private LAN IP addresses, home-directory paths, and email addresses.
 Use `/usr/bin/grep -rnI`; plain `grep` here skips git-ignored dirs.
 

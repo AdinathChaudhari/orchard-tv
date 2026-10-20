@@ -33,9 +33,24 @@ Home on Fire source and the Mac toolchain directly.
    launcher, platform, input, systemui, settings or providers packages.
 4. **Android 11 (API 30) has no `RenderEffect`**, so no live blur. Blur a small bitmap once
    (240x135) and draw it scaled.
-5. **Unverified until tested on the device:** whether `ACTION_APPLICATION_DETAILS_SETTINGS`
-   and `com.android.systemui/.Somnambulator` resolve, and whether installing a second app with a
-   HOME filter changes which home app the Stick picks. Resolve each one before relying on it.
+5. **`DreamManager.testDream` (the "test" route) always crashes a non-windowless dream on Android 11 / Fire OS 8.**
+   `DreamService.attach` calls `ATMS.startDreamActivity`, whose `enforceCallerIsDream` asks
+   `isDreaming()`, and that is `false` for a test dream (`!mCurrentDreamIsTest`). Even Android Colors would throw
+   `SecurityException` there (fixed upstream in 12). Test the real route only: set `screensaver_components`, then
+   `am start -a android.intent.action.MAIN -n com.android.systemui/.Somnambulator` (resolves on the Stick; calls
+   `IDreamManager.dream()`, `isTest=false`). The exception is thrown by framework code on the main thread, so a
+   dream cannot catch it and it kills the whole process. Do NOT move the dream to its own `android:process`:
+   `ATMS.startDreamActivity` launches the framework `DreamActivity` in the package's default process, and its
+   `onCreate` casts the callback binder to the in-process `DreamServiceWrapper`; with the service in `:dream` the
+   activity gets a `BinderProxy`, throws `ClassCastException` and kills the launcher process (seen on the Stick,
+   2026-10-20 22:17, real route). The dream stays in the launcher process; the real route does not throw.
+   `ACTION_APPLICATION_DETAILS_SETTINGS` resolves too. Still unverified: whether a second app with a
+   HOME filter changes which home app the Stick picks.
+6. **Count launches, not process starts.** `boot_attempts++` used to run in `OrchardApp.onCreate`, so a dream
+   bind or a receiver-only process start (DebugReceiver while Orchard is dead) counted as a launch and was never
+   cleared by a first frame. Three of those in a row made the next Home press look like a crash loop and stripped
+   Home on Fire with no crash at all. The increment now runs in `HomeActivity.onCreate` (Application-stage
+   crashes are still caught by the crashes-file window).
 
 ## 3. Home on Fire (read from its source; it is GPLv3, so never copy its code)
 
@@ -114,3 +129,26 @@ Home on Fire source and the Mac toolchain directly.
    onStop. Orchard drops art, shelf, wallpaper and baked shelf bitmaps in onStop; the remaining Graphics is most
    likely the window surface buffers and HWUI pipeline caches that the app cannot free from Java. Target is
    not revised until the next on-device measurement attributes it (`dumpsys meminfo` Graphics vs Native).
+5. **`debug_time` must pin every time-derived element**, not just the sky. The header clock and the screensaver
+   clock read `System.currentTimeMillis()`, so media shot with a pinned minute showed the real time in the
+   header (README stills read "06:00" over a "21:27" raw capture). `ClockFormat.pinnedMillis` now feeds
+   `StatusStrip` (via `AmbientState.clockMs`) and `ClockFace`; the date stays real. Source README media from raw
+   captures only, never from retouched sets.
+6. **Rain streaks vanish on light skies** by construction: a slate tile at alpha .25 over a 0.72-luma sky peaks
+   at 0.066 contrast, and the Stick's H.264 halves it. Light-sky streak alpha now tracks the sky
+   (`SkyPhase.rainAlphaLight`: .20 / (luma - .305), clamped .25-.55, times the day factor, which still ramps from 0
+   at the theme flip, so mid-luminance text contrast is untouched). Capture rain at 720p (`screenrecord --size
+   1280x720`): the Stick's 1080p readback gives ~11 fps, 720p ~27 fps. Trim to exactly 2 rain loops (2.954 s) for
+   a seamless GIF; scale to 960 px, since 640 px turns a 1.4 px streak into 0.5 px.
+7. **Memory peak came from un-recycled keyframes, not an unbounded cache.** After ~10 `debug_time` switches Graphics
+   climbed 21 -> 57 MB and total PSS read 132-137 MB under rain (idle 100 MB; fresh 55-68 MB);
+   `am send-trim-memory RUNNING_LOW` dropped 132 -> 100 MB, so the memory was garbage waiting for the GC. Each
+   960x540 keyframe is 2 MB of pixels plus a GL texture, and `SkyView.prune()` only nulled the reference. Fix:
+   pruned / released keyframes and evicted Halo sprites are recycled explicitly one second later (sky ones on the
+   sky thread so a queued bake finishes reading first); `onTrimMemory >= RUNNING_LOW` calls `Halo.clear()` and
+   `SkyView.trim()`. Re-measure on the TV: fresh, 20 switches, 15 s rain, `dumpsys meminfo` (target <= 120 MB).
+8. **After `launcher.sh install` the Stick sits on the Amazon home**, and Home on Fire redirects only when that home
+   comes to the front, so Home pressed from it stays there. `cmd_install` now ends with `am start
+   tv.orchard.home/.HomeActivity`; from any app, Home then lands on Orchard.
+9. **Measure janky frames only after the screen settles.** The first dock sweep within ~4 s of a `debug_time`
+   switch reads 30-57 % janky because it counts the switch's own frames; wait 20 s after a switch.

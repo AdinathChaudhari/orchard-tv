@@ -72,7 +72,7 @@ from that project is not bundled in Orchard.
 
 ================================================================
 3. Inter typeface 4.1 (SIL Open Font License 1.1) - https://github.com/rsms/inter
-Bundled as Latin subsets: res/font/inter_regular.ttf, inter_medium.ttf, inter_semibold.ttf
+Bundled as Latin subsets: res/font/inter_regular.ttf, inter_medium.ttf, inter_semibold.ttf, inter_thin.ttf
 ================================================================
 
 Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter)
@@ -167,3 +167,20 @@ INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
 DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
+
+
+================================================================
+4. Open-Meteo weather data (CC BY 4.0) - https://open-meteo.com/
+================================================================
+
+Orchard's weather chip fetches the forecast from the Open-Meteo API (free tier, no key). Open-Meteo asks for
+attribution under Creative Commons Attribution 4.0 (https://creativecommons.org/licenses/by/4.0/); Settings in the
+app shows "Weather data by Open-Meteo.com (CC BY 4.0)". Only city coordinates are sent. No Open-Meteo code is bundled.
+
+
+================================================================
+5. NOAA solar position equations - https://gml.noaa.gov/grad/solcalc/calcdetails.html
+================================================================
+
+app/src/tv/orchard/home/Solar.java reimplements the NOAA Global Monitoring Laboratory sunrise, sunset and solar
+elevation equations (Meeus-based). NOAA publishes the method; no NOAA code is copied.

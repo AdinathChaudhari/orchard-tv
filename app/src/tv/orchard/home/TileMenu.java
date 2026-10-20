@@ -6,11 +6,9 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
-import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.RectF;
-import android.graphics.Shader;
 import android.util.DisplayMetrics;
 import android.util.Property;
 import android.util.TypedValue;
@@ -49,6 +47,7 @@ public class TileMenu extends FrameLayout {
     private boolean shown, dismissing, closedDone, selectDown;
     private ObjectAnimator bumpAnim;
     private Row bumpRow;
+    private Theme appliedTheme;
 
     public TileMenu(Context c) {
         super(c);
@@ -56,7 +55,7 @@ public class TileMenu extends FrameLayout {
         setClipChildren(false);
 
         veil = new View(c);
-        veil.setBackgroundColor(Color.BLACK);
+        veil.setBackgroundColor(Theme.cur().veil);
         veil.setAlpha(0f);
         addView(veil, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
 
@@ -68,12 +67,27 @@ public class TileMenu extends FrameLayout {
         header.setIncludeFontPadding(false);
         header.setSingleLine(true);
         header.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        header.setTextColor(Ui.TEXT2);
+        header.setTextColor(Theme.cur().text2);
         header.setTypeface(Ui.medium());
         header.setTextSize(TypedValue.COMPLEX_UNIT_PX, Ui.px(Ui.T_CAPTION2));
         header.setLetterSpacing(Ui.tracking(Ui.T_CAPTION2));
         header.setGravity(Gravity.CENTER_VERTICAL);
         card.addView(header);
+    }
+
+    /**
+     * Re-tints the veil (same as the quick panel), the thick-glass card, the header and the rows for Theme.cur()
+     * (colours change only here, never animated). Idempotent (early return on the same palette), ends with invalidate().
+     */
+    public void applyTheme() {
+        Theme t = Theme.cur();
+        if (t == appliedTheme) return;
+        appliedTheme = t;
+        veil.setBackgroundColor(t.veil);                              // view alpha PANEL_VEIL_ALPHA is animated by playIn()
+        header.setTextColor(t.text2);
+        card.applyTheme();
+        for (Row r : rows) r.applyTheme();
+        invalidate();
     }
 
     public void setListener(Listener l) { listener = l; }
@@ -121,7 +135,11 @@ public class TileMenu extends FrameLayout {
             if (first < 0 && enabled[i]) first = i;
         }
         focus = Math.max(0, first);
-        for (int i = 0; i < n; i++) rows[i].setFocused(i == focus, false);
+        applyTheme();
+        for (int i = 0; i < n; i++) {
+            rows[i].applyTheme();
+            rows[i].setFocused(i == focus, false);
+        }
         playIn();
     }
 
@@ -271,7 +289,7 @@ public class TileMenu extends FrameLayout {
 
     /** Thick glass; the view is larger than the card by Glass.shadowPad() on every side. Slice sampled at the LAYOUT rect. */
     private static final class Card extends FrameLayout {
-        private final Glass glass = new Glass(Ui.CTX_R, Ui.GLASS_THICK, 1f);
+        private final Glass glass = new Glass(Ui.CTX_R, Theme.cur().glassThick, 1f);
         private final int[] loc = new int[2];
         private final int screenW, screenH, pad;
         private Bitmap wallpaper;
@@ -289,6 +307,11 @@ public class TileMenu extends FrameLayout {
 
         void setWallpaper(Bitmap b) {
             wallpaper = b;
+            invalidate();
+        }
+
+        void applyTheme() {
+            glass.applyTheme(Theme.cur().glassThick);
             invalidate();
         }
 
@@ -328,6 +351,7 @@ public class TileMenu extends FrameLayout {
         final boolean enabled;
         private final int w, h;
         private float radius, rimRadius, textY, textX;
+        private Theme rimTheme;
         private float p;
         private boolean focused;
         private ValueAnimator colourAnim;
@@ -391,17 +415,20 @@ public class TileMenu extends FrameLayout {
             rimRadius = Math.max(0f, radius - stroke / 2f);
             rimPaint.setStyle(Paint.Style.STROKE);
             rimPaint.setStrokeWidth(stroke);
-            double a = Math.toRadians(Ui.GLASS_RIM_ANGLE);
-            float dx = (float) Math.sin(a), dy = (float) -Math.cos(a);
-            float len = Math.abs(w * dx) + Math.abs(h * dy);
-            float cx = w / 2f, cy = h / 2f;
-            int white = 0xFFFFFF;
-            rimPaint.setShader(new LinearGradient(cx - dx * len / 2f, cy - dy * len / 2f, cx + dx * len / 2f, cy + dy * len / 2f,
-                new int[] {Ui.argb(Ui.GLASS_RIM_HI, white), Ui.argb(Ui.GLASS_RIM_LO, white),
-                    Ui.argb(Ui.GLASS_RIM_LO, white), Ui.argb(Ui.GLASS_RIM_END, white)},
-                new float[] {0f, Ui.GLASS_RIM_MIDLO_STOP, Ui.GLASS_RIM_MIDHI_STOP, 1f}, Shader.TileMode.CLAMP));
+            rimTheme = null;
+            applyTheme();
             textY = h / 2f - (fm.ascent + fm.descent) / 2f;
             textX = Ui.pxf(ROW_TEXT_PAD);
+        }
+
+        /** Rebuilds the rim gradient for Theme.cur(); idempotent. */
+        void applyTheme() {
+            Theme t = Theme.cur();
+            if (t == rimTheme) return;
+            rimTheme = t;
+            if (rect.isEmpty()) return;                                // onSizeChanged applies it
+            rimPaint.setShader(Glass.rimShader(t, w / 2f, h / 2f, w, h));
+            invalidate();
         }
 
         private static int lerp(int a, int b, float t) {
@@ -413,14 +440,16 @@ public class TileMenu extends FrameLayout {
 
         @Override
         protected void onDraw(Canvas c) {
-            fillPaint.setColor(lerp(Ui.GLASS, Ui.BTN_FOCUS_FILL, p));
+            Theme t = Theme.cur();
+            // light: unfocused rows are a faint ink wash (mockup :root[data-theme=light] .row:not(.focused))
+            fillPaint.setColor(lerp(t.light ? Theme.argb(.06f, 0x1B1B1F) : t.glassThin, t.btnFocusFill, p));
             c.drawRoundRect(rect, radius, radius, fillPaint);
             if (p < 0.999f) {
                 rimPaint.setAlpha(Math.round(255f * (1f - p)));
                 c.drawRoundRect(rimRect, rimRadius, rimRadius, rimPaint);
             }
-            int from = enabled ? Ui.TEXT : Ui.TEXT3;
-            int to = enabled ? Ui.BTN_FOCUS_TEXT : DISABLED_FOCUS_TEXT;
+            int from = enabled ? t.text : t.text3;
+            int to = enabled ? t.btnFocusText : DISABLED_FOCUS_TEXT;
             textPaint.setColor(lerp(from, to, p));
             c.drawText(text, textX, textY, textPaint);
         }

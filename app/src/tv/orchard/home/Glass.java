@@ -4,6 +4,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapShader;
 import android.graphics.BlurMaskFilter;
 import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.LinearGradient;
 import android.graphics.Matrix;
 import android.graphics.Paint;
@@ -20,7 +21,7 @@ import android.graphics.Shader;
  */
 public final class Glass {
     private final int radiusDesign;
-    private final int fillColor;
+    private int fillColor;
     private final float sliceAlpha;
 
     private final Paint shadowPaint = new Paint(Paint.FILTER_BITMAP_FLAG);
@@ -30,6 +31,8 @@ public final class Glass {
     private final Paint refractPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint edgePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint rimPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint outlinePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final RectF outlineRect = new RectF();
     private final RectF rect = new RectF();
     private final RectF rimRect = new RectF();
     private final Matrix matrix = new Matrix();
@@ -39,6 +42,9 @@ public final class Glass {
     private Bitmap shadow;                 // ALPHA_8, (w + 2 pad) x (h + 2 pad)
     private Bitmap shaderBitmap;
     private BitmapShader shader;
+    private float outlineRadius;
+    private Theme appliedTheme;            // palette the paints were last built for (palettes are immutable singletons)
+    private int appliedFill;
 
     public Glass(int radiusDesignPx, int fillColor, float sliceAlpha) {
         this.radiusDesign = radiusDesignPx;
@@ -62,35 +68,63 @@ public final class Glass {
         rimRect.set(stroke / 2f, stroke / 2f, w - stroke / 2f, h - stroke / 2f);
         rimRadius = Math.max(0f, radius - stroke / 2f);
 
-        fillPaint.setColor(fillColor);
         slicePaint.setAlpha(Math.round(sliceAlpha * 255f));
-
-        int white = 0xFFFFFF;
-        innerPaint.setShader(new LinearGradient(0, 0, 0, h * Ui.GLASS_INNER_H,
-                Ui.argb(Ui.GLASS_INNER_ALPHA, white), Ui.argb(0f, white), Shader.TileMode.CLAMP));
-        refractPaint.setShader(new LinearGradient(0, 0, 0, Ui.pxf(Ui.GLASS_REFRACT_H),
-                Ui.argb(Ui.GLASS_REFRACT_ALPHA, white), Ui.argb(0f, white), Shader.TileMode.CLAMP));
 
         edgePaint.setStyle(Paint.Style.STROKE);
         edgePaint.setStrokeWidth(stroke);
-        edgePaint.setColor(Ui.argb(Ui.GLASS_TOP_EDGE_ALPHA, white));
         edgeY = stroke / 2f;
         edgeX0 = radius;
         edgeX1 = w - radius;
+        rimPaint.setStyle(Paint.Style.STROKE);
+        rimPaint.setStrokeWidth(stroke);
+        outlinePaint.setStyle(Paint.Style.STROKE);
+        outlinePaint.setStrokeWidth(stroke);
+        outlineRect.set(-stroke / 2f, -stroke / 2f, w + stroke / 2f, h + stroke / 2f);   // CSS 0 0 0 1px: just outside the box
+        outlineRadius = radius + stroke / 2f;
 
-        // CSS linear-gradient(115deg): direction (sin a, -cos a), line length |w sin a| + |h cos a|, through the centre
+        applyTheme(fillColor, true);
+        buildShadow(stroke);
+    }
+
+    /**
+     * Re-tints the surface for Theme.cur() with a new fill (colours change only here, never animated). Cheap and
+     * idempotent: returns at once when neither the palette nor the fill changed. The ALPHA_8 shadow bitmap is
+     * colourless, so only its paint colour changes.
+     */
+    public void applyTheme(int newFill) { applyTheme(newFill, false); }
+
+    private void applyTheme(int newFill, boolean force) {
+        Theme t = Theme.cur();
+        if (!force && t == appliedTheme && newFill == appliedFill) return;
+        appliedTheme = t;
+        appliedFill = newFill;
+        fillColor = newFill;
+        if (w < 1 || h < 1) return;                                    // setSize() applies it later
+        fillPaint.setColor(newFill);
+        int white = 0xFFFFFF;
+        innerPaint.setShader(new LinearGradient(0, 0, 0, h * Ui.GLASS_INNER_H,
+                Ui.argb(t.innerAlpha, white), Ui.argb(0f, white), Shader.TileMode.CLAMP));
+        refractPaint.setShader(new LinearGradient(0, 0, 0, Ui.pxf(Ui.GLASS_REFRACT_H),
+                Ui.argb(t.refractAlpha, white), Ui.argb(0f, white), Shader.TileMode.CLAMP));
+        edgePaint.setColor(Ui.argb(t.topEdgeAlpha, white));
+        rimPaint.setShader(rimShader(t, w / 2f, h / 2f, w, h));
+        outlinePaint.setColor(t.glassOutline);
+        shadowPaint.setColor(Ui.argb(t.glassDropAlpha, t.dropRgb));
+    }
+
+    /**
+     * The 1 px rim gradient (CSS linear-gradient(115deg): direction (sin a, -cos a), line length |w sin a| + |h cos a|,
+     * through the centre cx, cy) for a w x h surface, in the palette's rimHi / rimLo. Shared by the glass views.
+     */
+    static Shader rimShader(Theme t, float cx, float cy, float w, float h) {
         double a = Math.toRadians(Ui.GLASS_RIM_ANGLE);
         float dx = (float) Math.sin(a), dy = (float) -Math.cos(a);
         float len = Math.abs(w * dx) + Math.abs(h * dy);
-        float cx = w / 2f, cy = h / 2f;
-        rimPaint.setStyle(Paint.Style.STROKE);
-        rimPaint.setStrokeWidth(stroke);
-        rimPaint.setShader(new LinearGradient(cx - dx * len / 2f, cy - dy * len / 2f, cx + dx * len / 2f, cy + dy * len / 2f,
-                new int[] { Ui.argb(Ui.GLASS_RIM_HI, white), Ui.argb(Ui.GLASS_RIM_LO, white),
-                        Ui.argb(Ui.GLASS_RIM_LO, white), Ui.argb(Ui.GLASS_RIM_END, white) },
-                new float[] { 0f, Ui.GLASS_RIM_MIDLO_STOP, Ui.GLASS_RIM_MIDHI_STOP, 1f }, Shader.TileMode.CLAMP));
-
-        buildShadow(stroke);
+        int white = 0xFFFFFF;
+        return new LinearGradient(cx - dx * len / 2f, cy - dy * len / 2f, cx + dx * len / 2f, cy + dy * len / 2f,
+                new int[] { Ui.argb(t.rimHi, white), Ui.argb(t.rimLo, white),
+                        Ui.argb(t.rimLo, white), Ui.argb(Ui.GLASS_RIM_END, white) },
+                new float[] { 0f, Ui.GLASS_RIM_MIDLO_STOP, Ui.GLASS_RIM_MIDHI_STOP, 1f }, Shader.TileMode.CLAMP);
     }
 
     /** One pre-rendered ALPHA_8 bitmap: blurred rounded rect, shifted down by the drop, interior cut out (CSS box-shadow). */
@@ -109,7 +143,6 @@ public final class Glass {
         Paint cut = new Paint(Paint.ANTI_ALIAS_FLAG);
         cut.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.CLEAR));
         c.drawRoundRect(new RectF(pad, pad, pad + w, pad + h), radius, radius, cut);
-        shadowPaint.setColor(Ui.argb(Ui.GLASS_DROP_ALPHA, 0x000000));
     }
 
     /**
@@ -142,6 +175,7 @@ public final class Glass {
             c.drawRoundRect(rect, radius, radius, slicePaint);
         }
         c.drawRoundRect(rect, radius, radius, fillPaint);
+        if (Color.alpha(outlinePaint.getColor()) > 0) c.drawRoundRect(outlineRect, outlineRadius, outlineRadius, outlinePaint);
         c.drawRoundRect(rect, radius, radius, innerPaint);
         c.drawRoundRect(rect, radius, radius, refractPaint);
         c.drawLine(edgeX0, edgeY, edgeX1, edgeY, edgePaint);

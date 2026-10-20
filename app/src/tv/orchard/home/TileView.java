@@ -66,6 +66,12 @@ public class TileView extends View {
     private Bitmap art;
     private int glowColor = Ui.FTH_GLOW;
     private float glowAlpha = Ui.GLOW_ALPHA;
+    private int tGlowColor = Ui.FTH_GLOW;                               // glow as the live theme draws it (see computeGlow)
+    private float tGlowAlpha = Ui.GLOW_ALPHA;
+    private final Paint haloScratch = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private boolean themeApplied;
+    private boolean appliedLight;
+    private float appliedTs, appliedTn;
 
     private BitmapShader shader;
     private final Matrix shaderMatrix = new Matrix();
@@ -107,7 +113,7 @@ public class TileView extends View {
         setFocusableInTouchMode(false);
         setLongClickable(false);
         edge.setStyle(Paint.Style.STROKE);
-        edge.setColor(Ui.argb(Ui.TILE_EDGE_ALPHA, WHITE));
+        edge.setColor(Theme.cur().tileEdge);
         rim.setStyle(Paint.Style.STROKE);
         plate.setColor(Ui.PLATE);
         animate().setUpdateListener(tick);
@@ -141,13 +147,13 @@ public class TileView extends View {
             glyphPaint.setStyle(Paint.Style.STROKE);
             glyphPaint.setStrokeCap(Paint.Cap.ROUND);
             glyphPaint.setStrokeJoin(Paint.Join.ROUND);
-            glyphPaint.setColor(Ui.argb(Ui.FTH_GLYPH_ALPHA, WHITE));
+            glyphPaint.setColor(Theme.cur().fthInk);
             caption = new Paint(Paint.ANTI_ALIAS_FLAG);
             caption.setTypeface(Ui.medium());
             caption.setTextSize(Ui.pxf(Ui.T_CAPTION2));
             caption.setLetterSpacing(Ui.tracking(Ui.T_CAPTION2));
             caption.setTextAlign(Paint.Align.CENTER);
-            caption.setColor(Ui.argb(Ui.TEXT2_ALPHA, WHITE));
+            caption.setColor(Theme.rise(Theme.cur().text2));
         }
         buildGeometry();
         invalidate();
@@ -159,6 +165,7 @@ public class TileView extends View {
         artPaint.setShader(null);
         glowColor = Ui.FTH_GLOW;
         glowAlpha = Ui.GLOW_ALPHA;
+        computeGlow();
         invalidate();
     }
 
@@ -170,6 +177,7 @@ public class TileView extends View {
     public void setArt(Bitmap bitmap, int color, float alpha) {
         glowColor = color;
         glowAlpha = alpha;
+        computeGlow();
         // no art yet (cold start, or released in onStop): the app's own vivid colour, so a rebind does not flash grey
         plate.setColor(bitmap == null && color != 0 ? (0xFF000000 | ColorMath.withLightness(color, 0.30f, 0.8f)) : Ui.PLATE);
         if (bitmap != art) {
@@ -184,6 +192,44 @@ public class TileView extends View {
 
     public int glowColor() { return glowColor; }
     public float glowAlpha() { return glowAlpha; }
+    /** The glow the row draws: the art's own (dark-theme maths) in the dark theme, relit to the light glow tokens in the light one. */
+    public int themedGlowColor() { return tGlowColor; }
+    public float themedGlowAlpha() { return tGlowAlpha; }
+
+    /** ArtCache hands over a dark-theme glow (L 0.50 / 0.58, alpha .65 / .85 for dark art); the light theme re-lights it. */
+    private void computeGlow() {
+        Theme t = Theme.cur();
+        if (!t.light) {
+            tGlowColor = glowColor;
+            tGlowAlpha = glowAlpha;
+            return;
+        }
+        boolean dark = glowAlpha >= (Ui.GLOW_ALPHA + Ui.GLOW_DARK_ALPHA) / 2f;
+        tGlowColor = ColorMath.withLightness(glowColor, dark ? t.glowDarkLum : t.glowLum, 1f);
+        tGlowAlpha = dark ? t.glowDarkAlpha : t.glowAlpha;
+    }
+
+    /**
+     * Theme tokens changed (Theme.set already ran): static tile edge, glow tint, and for the Fire TV Home tile its glass
+     * fill, rim, ink and caption. Art, plates and banners are never themed. Cheap and idempotent (key = light + ts + tn).
+     */
+    public void applyTheme() {
+        Theme t = Theme.cur();
+        if (themeApplied && appliedLight == t.light && appliedTs == Theme.ts() && appliedTn == Theme.tn()) return;
+        themeApplied = true;
+        appliedLight = t.light;
+        appliedTs = Theme.ts();
+        appliedTn = Theme.tn();
+        edge.setColor(t.tileEdge);
+        computeGlow();
+        if (fireTvHome && fthFill != null) {
+            glyphPaint.setColor(t.fthInk);
+            caption.setColor(Theme.rise(t.text2));
+            buildFthShaders(getWidth(), getHeight());
+        }
+        invalidate();
+        invalidateRow();
+    }
 
     // ---- focus / press --------------------------------------------------------------------------------
 
@@ -549,13 +595,8 @@ public class TileView extends View {
         updateShaderMatrix();
 
         if (fireTvHome && fthFill != null) {
-            fthFill.setShader(cssGradient(w, h, Ui.FTH_FILL_ANGLE,
-                    new int[] {Ui.argb(Ui.FTH_FILL_HI, WHITE), Ui.argb(Ui.FTH_FILL_LO, WHITE)}, null));
             fthRim.setStrokeWidth(sw);
-            fthRim.setShader(cssGradient(w, h, Ui.GLASS_RIM_ANGLE,
-                    new int[] {Ui.argb(Ui.GLASS_RIM_HI, WHITE), Ui.argb(Ui.GLASS_RIM_LO, WHITE),
-                            Ui.argb(Ui.GLASS_RIM_HI * 0.5f, WHITE)},
-                    new float[] {0f, Ui.FTH_RIM_MID_STOP, 1f}));
+            buildFthShaders(w, h);
             // House glyph on a 48-unit viewBox scaled to Ui.FTH_GLYPH_BOX design px.
             float u = Ui.pxf(Ui.FTH_GLYPH_BOX) / Ui.FTH_VIEWBOX;
             float cx = w / 2f, cy = h / 2f - Ui.pxf(Ui.FTH_GLYPH_RAISE);
@@ -574,6 +615,16 @@ public class TileView extends View {
             glyphPaint.setStrokeWidth(Ui.FTH_STROKE_UNITS * u);
             captionBaseline = h - Ui.pxf(Ui.FTH_CAPTION_BOTTOM) - caption.getFontMetrics().descent;
         }
+    }
+
+    /** Fire TV Home glass: fill gradient fthFillA -> fthFillB and rim from rimHi / rimLo (live theme). */
+    private void buildFthShaders(int w, int h) {
+        if (w <= 0 || h <= 0 || fthFill == null) return;
+        Theme t = Theme.cur();
+        fthFill.setShader(cssGradient(w, h, Ui.FTH_FILL_ANGLE, new int[] {t.fthFillA, t.fthFillB}, null));
+        fthRim.setShader(cssGradient(w, h, Ui.GLASS_RIM_ANGLE,
+                new int[] {Ui.argb(t.rimHi, WHITE), Ui.argb(t.rimLo, WHITE), Ui.argb(t.rimHi * 0.5f, WHITE)},
+                new float[] {0f, Ui.FTH_RIM_MID_STOP, 1f}));
     }
 
     private void updateShaderMatrix() {
@@ -597,6 +648,9 @@ public class TileView extends View {
                 colors, pos, Shader.TileMode.CLAMP);
     }
 
+    private static final float FTH_BOOST_ALPHA = 0.30f;
+    private final Paint fthBoost = new Paint(Paint.ANTI_ALIAS_FLAG);
+
     // ---- drawing (no allocation) ------------------------------------------------------------------------
 
     @Override
@@ -606,8 +660,17 @@ public class TileView extends View {
             canvas.drawRoundRect(outer, radius, radius, fthFill);
             canvas.drawPath(glyph, glyphPaint);
             if (p < 1f) {                                                // caption hidden while focused
-                caption.setColor(Ui.argb(Ui.TEXT2_ALPHA * (1f - p), WHITE));
-                canvas.drawText(label, getWidth() / 2f, captionBaseline, caption);
+                Theme th = Theme.cur();
+                // glass fill over whatever is behind it; keep the caption >= 4.5:1 in light horizon phases
+                int bgA = Contrast.over(th.fthFillA, Theme.scrim()), bgB = Contrast.over(th.fthFillB, Theme.scrim());
+                int ci = Contrast.pickInk(Theme.rise(th.text2), bgA, bgB, Theme.LIGHT.textHi, 0xFFFFFFFF);
+                caption.setColor((ci & 0xFFFFFF) | (Math.round((ci >>> 24) * (1f - p)) << 24));
+                if (Contrast.worst(ci | 0xFF000000, bgA, bgB) < Contrast.AA) {   // twilight horizons: neither ink clears 4.5:1 on the glass alone
+                    boolean inkDark = Contrast.luminance(ci) < 0.5;                // so lay a veil of the opposite tone under the label
+                    fthBoost.setColor((inkDark ? 0xFFFFFFFF : 0xFF000000) & 0xFFFFFF | (Math.round(255f * FTH_BOOST_ALPHA * (1f - p)) << 24));
+                    canvas.drawRoundRect(outer, radius, radius, fthBoost);
+                }
+                Halo.drawText(canvas, label, getWidth() / 2f, captionBaseline, caption, haloScratch);
             }
             canvas.drawRoundRect(inset, insetRadius, insetRadius, fthRim);
         } else if (shader != null) {

@@ -2,7 +2,7 @@ package tv.orchard.home;
 
 import android.app.Application;
 
-/** Application: boot_attempts++ first line, installs CrashGuard, holds ArtCache. */
+/** Application: installs CrashGuard, holds ArtCache. */
 public class OrchardApp extends Application {
     private State state;
     private ArtCache art;
@@ -14,7 +14,9 @@ public class OrchardApp extends Application {
     public void onCreate() {
         super.onCreate();
         state = new State(this);
-        state.incrementBootAttempts();           // PLAN 2.2: first thing, before anything can fail
+        // ClockDream must share this process: Android 11's DreamActivity is started in the package's default process
+        // and casts its binder to the in-process DreamServiceWrapper (a ":dream" process crashes it, learnings 2.5).
+        // boot_attempts++ lives in HomeActivity.onCreate (PLAN 2.2): dream binds / receiver-only starts are not launches.
         CrashGuard.install(state.crashesFile(), FireTvBridge.crashListener(this));
         art = new ArtCache(this);
     }

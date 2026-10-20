@@ -27,6 +27,8 @@ import android.view.animation.LinearInterpolator;
 public class TopShelfView extends View {
     private static final int STYLE_EMBLEM = 0, STYLE_BANNER = 1, STYLE_OFF = 2;
     private static final int GLOW_NONE = 0, GLOW_BITMAP = 1, GLOW_FLAT = 2;
+    private static final int TIER_BITMAP = 0, TIER_FLAT = 1, TIER_EMBLEM = 2;
+    private static final float EPS = 1e-3f;
     private static final float FADE_START = (Ui.HERO_BLEED_H - Ui.HERO_FADE_H) / (float) Ui.HERO_BLEED_H;
     private static final int GLOW_FLAT_PAD = 64;     // design px around the flat glow (3 sigma of blur 40)
     private static final float BAKE_SCALE = 0.25f;   // wash / bleed / overlay bitmaps are a quarter of the view size
@@ -39,9 +41,10 @@ public class TopShelfView extends View {
         Bitmap art;              // emblem or banner
         Bitmap glowBmp;          // pre-blurred banner glow
         Bitmap bleedBmp;         // hero=blur
-        Bitmap bake;             // wash x fade (+ bleed when hero=blur), quarter resolution ARGB
+        Bitmap bakeD;            // dark-token wash x fade (+ bleed when hero=blur), quarter resolution ARGB; null until needed
+        Bitmap bakeL;            // the same from the light tokens; null until needed
         int glowKind = GLOW_NONE;
-        float glowBase;
+        int glowTier = TIER_BITMAP;   // which Theme hero*GlowAlpha applies
         float cardA = 1f;        // card fade-in (late art)
         String title = "", sub = "";
         final Paint bleed = new Paint();
@@ -64,7 +67,8 @@ public class TopShelfView extends View {
             art = null;
             glowBmp = null;
             bleedBmp = null;
-            bake = null;
+            bakeD = null;
+            bakeL = null;
             glowKind = GLOW_NONE;
             bleed.setShader(null);
             card.setShader(null);
@@ -94,12 +98,24 @@ public class TopShelfView extends View {
 
     // shared, built in onSizeChanged
     private final Paint overlayP = new Paint(Paint.FILTER_BITMAP_FLAG);
-    private Bitmap overlay;                // light leak + both vignettes in one quarter-resolution ARGB bitmap
+    private Bitmap overlay;                // dark tokens: light leak + both vignettes in one quarter-resolution ARGB bitmap (null until needed)
+    private Bitmap overlayL;               // the same from the light tokens (null until needed)
     private final RectF fullDst = new RectF();
     private final Paint shadowP = new Paint(Paint.FILTER_BITMAP_FLAG);
     private final Paint rim = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final TextPaint titleP = new TextPaint(Paint.ANTI_ALIAS_FLAG);
     private final TextPaint subP = new TextPaint(Paint.ANTI_ALIAS_FLAG);
+    private final TextPaint haloP = new TextPaint(Paint.ANTI_ALIAS_FLAG);   // Halo scratch
+    private int subBase = Ui.TEXT2;        // Theme.rise(text2), alpha included
+    private float builtShadowA = -1f, builtContactA = -1f;   // card shadow alphas the shared shadow bitmap was drawn with
+    private boolean themeApplied;
+    private boolean appliedLight;
+    private float appliedTs, appliedTn;
+    // theme mix (Rev 4/6): current and target alphas of the dark and light backdrops, and the light share for the suppress rule
+    private float darkA = 1f, lightA = 0f, mixP = 0f;
+    private float tDarkA = 1f, tLightA = 0f, tMixP = 0f;
+    private float fromD, fromL, fromP;
+    private ValueAnimator mixAnim;
     private Shader fadeShader;
     private Bitmap flatGlow, shadowBmp;
     private final RectF cardRect = new RectF();
@@ -114,20 +130,116 @@ public class TopShelfView extends View {
     public TopShelfView(Context context) {
         super(context);
         setWillNotDraw(false);
-        titleP.setColor(Ui.TEXT);
-        subP.setColor(Ui.TEXT2);
         shadowP.setColor(0xFF000000);
         rim.setStyle(Paint.Style.STROKE);
         applyFonts();
+        paintTheme();
+    }
+
+    /** Colours and shadows that follow the theme: title / subtitle ink, title shadow, card shadow tint. No invalidate. */
+    private void paintTheme() {
+        Theme t = Theme.cur();
+        titleP.setColor(Theme.rise(t.text));
+        subBase = Theme.rise(t.text2);
+        subP.setColor(subBase);
+        if ((t.titleShadow >>> 24) == 0) {
+            titleP.clearShadowLayer();
+        } else {
+            float sigma = Ui.pxf(Ui.HERO_TITLE_SHADOW_BLUR) / 2f;
+            titleP.setShadowLayer(Math.max(1f, (sigma - 0.5f) / 0.57735f), 0f, Ui.pxf(Ui.HERO_TITLE_SHADOW_Y), t.titleShadow);
+        }
+        shadowP.setColor(0xFF000000 | (t.dropRgb & 0xFFFFFF));
+    }
+
+    /**
+     * Theme tokens changed (Theme.set already ran): title / subtitle ink and shadow, card shadow and contact alphas
+     * and tint, glow alphas. Cheap and idempotent (key = light + ts + tn); one invalidate.
+     */
+    public void applyTheme() {
+        Theme t = Theme.cur();
+        if (themeApplied && appliedLight == t.light && appliedTs == Theme.ts() && appliedTn == Theme.tn()) return;
+        themeApplied = true;
+        appliedLight = t.light;
+        appliedTs = Theme.ts();
+        appliedTn = Theme.tn();
+        paintTheme();
+        if (!released && !shadowDst.isEmpty() && (builtShadowA != t.heroArtShadowAlpha || builtContactA != t.heroArtContactAlpha)) {
+            buildShadow();
+        }
+        invalidate();
+    }
+
+    /**
+     * Backdrop mix. p = 0 dark .. 1 light (the day wallpaper's own mix), skyOn = Wallpaper Sky is driving the light
+     * theme. hbk = 1 - HERO_TW_CUT * 4p(1-p) dips the wash while the two cross over. The dark bake is drawn at
+     * (1-p)*hbk and the light bake over it at p*hbk*(skyOn ? hbSky : 1); a bake whose alpha is 0 is not built or drawn.
+     * animate (a user Theme change only) cross-fades the two alphas over THEME_HERO_FADE_MS; otherwise they snap.
+     */
+    public void setThemeMix(float p, boolean skyOn, boolean animate) {
+        p = p < 0f ? 0f : (p > 1f ? 1f : p);
+        float hbk = 1f - Ui.HERO_TW_CUT * 4f * p * (1f - p);
+        float d = (1f - p) * hbk;
+        float l = p * hbk * (skyOn ? Theme.LIGHT.hbSky : 1f);
+        if (Math.abs(d - tDarkA) < EPS && Math.abs(l - tLightA) < EPS && Math.abs(p - tMixP) < EPS) return;
+        if (mixAnim != null) mixAnim.cancel();
+        mixAnim = null;
+        tDarkA = d;
+        tLightA = l;
+        tMixP = p;
+        ensureAllBakes();                                              // the target's bakes exist before the first frame of the fade
+        long dur = Ui.ms(Ui.THEME_HERO_FADE_MS);
+        if (!animate || dur <= 0 || !bound || vw <= 0 || !isAttachedToWindow()) {
+            darkA = d;
+            lightA = l;
+            mixP = p;
+            dropUnusedBakes();
+            invalidate();
+            return;
+        }
+        fromD = darkA;
+        fromL = lightA;
+        fromP = mixP;
+        ValueAnimator a = ValueAnimator.ofFloat(0f, 1f);
+        a.setInterpolator(new LinearInterpolator());
+        a.setDuration(dur);
+        a.addUpdateListener(va -> {
+            float f = (Float) va.getAnimatedValue();
+            darkA = fromD + (tDarkA - fromD) * f;
+            lightA = fromL + (tLightA - fromL) * f;
+            mixP = fromP + (tMixP - fromP) * f;
+            if (f >= 1f) {
+                mixAnim = null;
+                dropUnusedBakes();
+            }
+            invalidate();
+        });
+        mixAnim = a;
+        a.start();
+    }
+
+    private boolean needDark() { return darkA > EPS || tDarkA > EPS; }
+    private boolean needLight() { return lightA > EPS || tLightA > EPS; }
+
+    private void ensureAllBakes() {
+        ensureOverlays();
+        for (Layer l : layers) ensureBakes(l);
+    }
+
+    /** After the mix settled: free the quarter-res bitmaps whose alpha is 0 (they are rebuilt if the mix moves again). */
+    private void dropUnusedBakes() {
+        boolean nd = needDark(), nl = needLight();
+        if (!nd) overlay = null;
+        if (!nl) overlayL = null;
+        for (Layer l : layers) {
+            if (!nd) l.bakeD = null;
+            if (!nl) l.bakeL = null;
+        }
     }
 
     private void applyFonts() {
         titleP.setTypeface(Ui.medium());
         titleP.setTextSize(Ui.pxf(Ui.T_TITLE2));
         titleP.setLetterSpacing(Ui.tracking(Ui.T_TITLE2));
-        float sigma = Ui.pxf(Ui.HERO_TITLE_SHADOW_BLUR) / 2f;
-        titleP.setShadowLayer(Math.max(1f, (sigma - 0.5f) / 0.57735f), 0f, Ui.pxf(Ui.HERO_TITLE_SHADOW_Y),
-                Ui.argb(Ui.HERO_TITLE_SHADOW_ALPHA, 0x000000));
         subP.setTypeface(Ui.regular());
         subP.setTextSize(Ui.pxf(Ui.T_BODY));
         subP.setLetterSpacing(Ui.tracking(Ui.T_BODY));
@@ -216,6 +328,8 @@ public class TopShelfView extends View {
         flatGlow = null;
         shadowBmp = null;
         overlay = null;
+        overlayL = null;
+        if (mixAnim != null) { mixAnim.cancel(); mixAnim = null; darkA = tDarkA; lightA = tLightA; mixP = tMixP; }
         invalidate();
     }
 
@@ -322,16 +436,16 @@ public class TopShelfView extends View {
             l.art = shelf;
             if (art.nearWhite(e)) {
                 l.glowKind = GLOW_FLAT;
-                l.glowBase = Ui.HERO_GLOW_ALPHA;
+                l.glowTier = TIER_BITMAP;
             } else {
                 l.glowBmp = art.glow(e);
                 l.glowKind = l.glowBmp != null ? GLOW_BITMAP : GLOW_FLAT;
-                l.glowBase = l.glowBmp != null ? Ui.HERO_GLOW_ALPHA : Ui.HERO_GLOW_FLAT_ALPHA;
+                l.glowTier = l.glowBmp != null ? TIER_BITMAP : TIER_FLAT;
             }
         } else {
             l.art = art.emblem(e);
             l.glowKind = GLOW_FLAT;
-            l.glowBase = cardStyle == STYLE_BANNER ? Ui.HERO_GLOW_FLAT_ALPHA : Ui.HERO_EMBLEM_GLOW_ALPHA;
+            l.glowTier = cardStyle == STYLE_BANNER ? TIER_FLAT : TIER_EMBLEM;
         }
         if (l.glowKind == GLOW_FLAT || l.glowKind == GLOW_BITMAP) {
             l.glow.setColor(ColorMath.withLightness(l.vivid, Ui.HERO_GLOW_FLAT_LUM, 1f));
@@ -363,22 +477,10 @@ public class TopShelfView extends View {
         a.start();
     }
 
-    /** Shaders for one layer: wash, optional full-bleed, card. Needs the view size. */
+    /** Shaders for one layer: optional full-bleed, card, then the bakes that can be seen. Needs the view size. */
     private void build(Layer l) {
         if (vw <= 0 || vh <= 0 || fadeShader == null) return;
         float w = vw, h = vh;
-        float cx = Ui.HERO_WASH_X * w, cy = Ui.HERO_WASH_Y * h, rx = Ui.HERO_WASH_RX * w, ry = Ui.HERO_WASH_RY * h;
-        int c0 = ColorMath.withLightness(l.vivid, Ui.HERO_LUM, Ui.HERO_SAT_MAX);
-        int c1 = ColorMath.withLightness(l.vivid, Ui.HERO_WASH_MID_LUM, Ui.HERO_SAT_MAX);
-        RadialGradient rg = new RadialGradient(cx, cy, rx, new int[] {c0, c1, Ui.BG},
-                new float[] {0f, Ui.HERO_WASH_MID, 1f}, Shader.TileMode.CLAMP);
-        Matrix m = new Matrix();
-        m.setScale(1f, ry / rx, cx, cy);
-        rg.setLocalMatrix(m);
-        Paint wash = new Paint();
-        wash.setDither(true);
-        wash.setShader(new ComposeShader(rg, fadeShader, PorterDuff.Mode.DST_IN));
-
         if (l.bleedBmp != null) {
             BitmapShader bs = new BitmapShader(l.bleedBmp, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
             float b = Ui.pxf(160);
@@ -392,7 +494,9 @@ public class TopShelfView extends View {
         } else {
             l.bleed.setShader(null);
         }
-        bake(l, wash);
+        l.bakeD = null;                                                // the app (or its art) changed: rebuild whichever are visible
+        l.bakeL = null;
+        ensureBakes(l);
 
         if (l.art != null) {
             BitmapShader cs = new BitmapShader(l.art, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
@@ -407,33 +511,59 @@ public class TopShelfView extends View {
         }
     }
 
+    /** Builds the dark and / or light bake of a layer when its alpha can be above 0 (lazy; never in onDraw). */
+    private void ensureBakes(Layer l) {
+        if (l.e == null || vw <= 0 || vh <= 0 || fadeShader == null) return;
+        if (l.bakeD == null && needDark()) l.bakeD = bakeFor(l, Theme.DARK);
+        if (l.bakeL == null && needLight()) l.bakeL = bakeFor(l, Theme.LIGHT);
+    }
+
     /**
-     * Wash x fade (and the full-bleed image, at its final alpha) painted once into a quarter-resolution bitmap, so
-     * onDraw is one filtered bitmap per layer instead of two ComposeShader full-width fills (Stick GPU-bound, P4).
+     * Wash x fade (and the full-bleed image, at its final alpha) of one token set painted once into a
+     * quarter-resolution bitmap, so onDraw is one filtered bitmap per layer and theme instead of two ComposeShader
+     * full-width fills (Stick GPU-bound, P4).
      */
-    private void bake(Layer l, Paint wash) {
+    private Bitmap bakeFor(Layer l, Theme t) {
+        float w = vw, h = vh;
+        float cx = Ui.HERO_WASH_X * w, cy = Ui.HERO_WASH_Y * h, rx = Ui.HERO_WASH_RX * w, ry = Ui.HERO_WASH_RY * h;
+        int c0 = ColorMath.withLightness(l.vivid, t.heroLum, t.heroSatMax);
+        int c1 = ColorMath.withLightness(l.vivid, t.heroWashMidLum, t.heroSatMax);
+        RadialGradient rg = new RadialGradient(cx, cy, rx, new int[] {c0, c1, t.bg},
+                new float[] {0f, t.heroWashMid, 1f}, Shader.TileMode.CLAMP);
+        Matrix m = new Matrix();
+        m.setScale(1f, ry / rx, cx, cy);
+        rg.setLocalMatrix(m);
+        Paint wash = new Paint();
+        wash.setDither(true);
+        wash.setShader(new ComposeShader(rg, fadeShader, PorterDuff.Mode.DST_IN));
+
         int bw = Math.max(1, Math.round(vw * BAKE_SCALE)), bh = Math.max(1, Math.round(vh * BAKE_SCALE));
         Bitmap b = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(b);
         c.scale(bw / (float) vw, bh / (float) vh);
         c.drawRect(0, 0, vw, vh, wash);
         if (l.bleedBmp != null && l.bleed.getShader() != null) {
-            l.bleed.setAlpha(Math.round(255f * Ui.HERO_BL_ALPHA));
+            l.bleed.setAlpha(Math.round(255f * t.heroBlAlpha));
             c.drawRect(0, 0, vw, vh, l.bleed);
         }
-        l.bake = b;
+        return b;
     }
 
-    /** Light leak, horizontal and bottom vignettes (all x fade) composited once, in the order onDraw used to draw them. */
-    private void buildOverlay() {
+    private void ensureOverlays() {
         if (vw <= 0 || vh <= 0 || fadeShader == null) return;
+        if (overlay == null && needDark()) overlay = buildOverlay(Theme.DARK);
+        if (overlayL == null && needLight()) overlayL = buildOverlay(Theme.LIGHT);
+    }
+
+    /** Light leak, horizontal and bottom vignettes (all x fade) of one token set composited once, in the order onDraw used to draw them. */
+    private Bitmap buildOverlay(Theme t) {
         int bw = Math.max(1, Math.round(vw * BAKE_SCALE)), bh = Math.max(1, Math.round(vh * BAKE_SCALE));
         float w = vw, h = vh;
         Bitmap b = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(b);
         c.scale(bw / w, bh / h);
 
-        RadialGradient lk = new RadialGradient(0.08f * w, 0f, 0.60f * w, Ui.argb(Ui.HERO_LEAK_ALPHA, 0xFFFFFF),
+        RadialGradient lk = new RadialGradient(0.08f * w, 0f, 0.60f * w, Ui.argb(t.heroLeakAlpha, 0xFFFFFF),
                 Ui.argb(0f, 0xFFFFFF), Shader.TileMode.CLAMP);
         Matrix lm = new Matrix();
         lm.setScale(1f, (0.80f * h) / (0.60f * w), 0.08f * w, 0f);
@@ -443,15 +573,15 @@ public class TopShelfView extends View {
         c.drawRect(0, 0, w, h, p);
 
         p.setShader(new ComposeShader(new LinearGradient(0, 0, 0.60f * w, 0,
-                Ui.argb(Ui.HERO_DIM_LEFT, Ui.BG), Ui.argb(Ui.HERO_DIM_RIGHT, Ui.BG), Shader.TileMode.CLAMP),
+                Ui.argb(t.heroDimLeft, t.bg), Ui.argb(t.heroDimRight, t.bg), Shader.TileMode.CLAMP),
                 fadeShader, PorterDuff.Mode.DST_IN));
         c.drawRect(0, 0, w, h, p);
 
         p.setShader(new ComposeShader(new LinearGradient(0, 0.5f * h, 0, h,
-                Ui.argb(0f, Ui.BG), Ui.argb(Ui.HERO_DIM_BOTTOM, Ui.BG), Shader.TileMode.CLAMP),
+                Ui.argb(0f, t.bg), Ui.argb(t.heroDimBottom, t.bg), Shader.TileMode.CLAMP),
                 fadeShader, PorterDuff.Mode.DST_IN));
         c.drawRect(0, 0, w, h, p);
-        overlay = b;
+        return b;
     }
 
     @Override
@@ -495,7 +625,9 @@ public class TopShelfView extends View {
     /** The two shared ALPHA_8 bitmaps (flat glow; contact + lift shadow), half resolution. */
     private void buildShared() {
         if (vw <= 0 || flatDst.isEmpty()) return;
-        buildOverlay();
+        overlay = null;
+        overlayL = null;
+        ensureOverlays();
         float half = 0.5f;
         int fw = Math.max(1, Math.round(flatDst.width() * half)), fh = Math.max(1, Math.round(flatDst.height() * half));
         Bitmap fg = Bitmap.createBitmap(fw, fh, Bitmap.Config.ALPHA_8);
@@ -503,7 +635,13 @@ public class TopShelfView extends View {
         RectF gr = new RectF(gp, gp, fw - gp, fh - gp);
         blurredRoundRect(new Canvas(fg), gr, Ui.pxf(2 * Ui.HERO_ART_R) * half, Ui.pxf(Ui.HERO_GLOW_BLUR) * half, 1f);
         flatGlow = fg;
+        buildShadow();
+    }
 
+    /** The contact + lift shadow (ALPHA_8, half resolution) at the current theme's hero card shadow alphas. */
+    private void buildShadow() {
+        float half = 0.5f;
+        Theme th = Theme.cur();
         int sw = Math.max(1, Math.round(shadowDst.width() * half)), sh = Math.max(1, Math.round(shadowDst.height() * half));
         Bitmap sb = Bitmap.createBitmap(sw, sh, Bitmap.Config.ALPHA_8);
         Canvas c = new Canvas(sb);
@@ -511,10 +649,12 @@ public class TopShelfView extends View {
         RectF r = new RectF(sp, sp, sw - sp, sh - sp);
         float rad = Ui.pxf(Ui.HERO_ART_R) * half;
         r.offset(0f, Ui.pxf(Ui.HERO_ART_SHADOW_Y) * half);
-        blurredRoundRect(c, r, rad, Ui.pxf(Ui.HERO_ART_SHADOW_BLUR) * half, Ui.HERO_ART_SHADOW_ALPHA);
+        blurredRoundRect(c, r, rad, Ui.pxf(Ui.HERO_ART_SHADOW_BLUR) * half, th.heroArtShadowAlpha);
         r.offset(0f, (Ui.pxf(Ui.HERO_ART_CONTACT_Y) - Ui.pxf(Ui.HERO_ART_SHADOW_Y)) * half);
-        blurredRoundRect(c, r, rad, Ui.pxf(Ui.HERO_ART_CONTACT_BLUR) * half, Ui.HERO_ART_CONTACT_ALPHA);
+        blurredRoundRect(c, r, rad, Ui.pxf(Ui.HERO_ART_CONTACT_BLUR) * half, th.heroArtContactAlpha);
         shadowBmp = sb;
+        builtShadowA = th.heroArtShadowAlpha;
+        builtContactA = th.heroArtContactAlpha;
     }
 
     /** CSS blur (px, already in bitmap pixels) -> BlurMaskFilter radius, as TileRow does (sigma = blur / 2). */
@@ -539,7 +679,17 @@ public class TopShelfView extends View {
         } else {
             backdrop(c, a, 1f);
         }
-        if (a.e != null && overlay != null) c.drawBitmap(overlay, null, fullDst, overlayP);
+        if (a.e != null) {
+            float wk = washK();
+            if (overlay != null && darkA > EPS) {
+                overlayP.setAlpha(Math.round(255f * darkA * wk));
+                c.drawBitmap(overlay, null, fullDst, overlayP);
+            }
+            if (overlayL != null && lightA > EPS) {
+                overlayP.setAlpha(Math.round(255f * lightA * wk));
+                c.drawBitmap(overlayL, null, fullDst, overlayP);
+            }
+        }
         if (fading) {
             front(c, a, 1f - fadeT);
             front(c, b, fadeT);
@@ -548,11 +698,25 @@ public class TopShelfView extends View {
         }
     }
 
+    /** The wash stays under the suppressed shelf in the dark theme and hides with it in the light one (mock: light hides #shelf). */
+    private float washK() { return 1f - mixP * (1f - sf); }
+
     private void backdrop(Canvas c, Layer l, float w) {
         if (l.e == null || w <= 0f) return;
-        if (l.bake == null) return;
-        l.bakeP.setAlpha(Math.round(255f * w));
-        c.drawBitmap(l.bake, null, fullDst, l.bakeP);
+        float wk = washK();
+        if (l.bakeD != null && darkA > EPS) {
+            l.bakeP.setAlpha(Math.round(255f * w * darkA * wk));
+            c.drawBitmap(l.bakeD, null, fullDst, l.bakeP);
+        }
+        if (l.bakeL != null && lightA > EPS) {
+            l.bakeP.setAlpha(Math.round(255f * w * lightA * wk));
+            c.drawBitmap(l.bakeL, null, fullDst, l.bakeP);
+        }
+    }
+
+    private float glowBase(Layer l) {
+        Theme t = Theme.cur();
+        return l.glowTier == TIER_BITMAP ? t.heroGlowAlpha : (l.glowTier == TIER_FLAT ? t.heroGlowFlatAlpha : t.heroEmblemGlowAlpha);
     }
 
     private void front(Canvas c, Layer l, float w) {
@@ -561,10 +725,10 @@ public class TopShelfView extends View {
         float ca = k * l.cardA;
         if (l.art != null && ca > 0.002f) {
             if (l.glowKind == GLOW_FLAT && flatGlow != null) {
-                l.glow.setAlpha(Math.round(255f * l.glowBase * ca));
+                l.glow.setAlpha(Math.round(255f * glowBase(l) * ca));
                 c.drawBitmap(flatGlow, null, flatDst, l.glow);
             } else if (l.glowKind == GLOW_BITMAP && l.glowBmp != null) {
-                l.glow.setAlpha(Math.round(255f * l.glowBase * ca));
+                l.glow.setAlpha(Math.round(255f * glowBase(l) * ca));
                 c.drawBitmap(l.glowBmp, null, glowBmpDst, l.glow);
             }
             if (shadowBmp != null) {
@@ -578,9 +742,9 @@ public class TopShelfView extends View {
         }
         int al = Math.round(255f * k);
         titleP.setAlpha(al);
-        c.drawText(l.title, Ui.pxf(Ui.HERO_TITLE_X), Ui.pxf(Ui.HERO_TITLE_BASELINE), titleP);
-        subP.setAlpha(Math.round(255f * k * Ui.TEXT2_ALPHA));
-        c.drawText(l.sub, Ui.pxf(Ui.HERO_TITLE_X), Ui.pxf(Ui.HERO_SUB_BASELINE), subP);
+        Halo.drawText(c, l.title, Ui.pxf(Ui.HERO_TITLE_X), Ui.pxf(Ui.HERO_TITLE_BASELINE), titleP, haloP);
+        subP.setAlpha(Math.round((subBase >>> 24) * k));
+        Halo.drawText(c, l.sub, Ui.pxf(Ui.HERO_TITLE_X), Ui.pxf(Ui.HERO_SUB_BASELINE), subP, haloP);
     }
 
     @Override
@@ -589,6 +753,13 @@ public class TopShelfView extends View {
         if (fadeAnim != null) fadeAnim.cancel();
         if (sfAnim != null) sfAnim.cancel();
         if (cardAnim != null) cardAnim.cancel();
+        if (mixAnim != null) {
+            mixAnim.cancel();
+            mixAnim = null;
+            darkA = tDarkA;
+            lightA = tLightA;
+            mixP = tMixP;
+        }
         if (fading) endFade(true);
         if (cardAnimLayer != null) cardAnimLayer.cardA = 1f;
         sf = sfTarget;

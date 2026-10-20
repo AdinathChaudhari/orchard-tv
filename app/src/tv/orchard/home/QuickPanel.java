@@ -7,13 +7,11 @@ import android.graphics.Bitmap;
 import android.graphics.BlurMaskFilter;
 import android.graphics.Canvas;
 import android.graphics.Color;
-import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.PorterDuff;
 import android.graphics.PorterDuffXfermode;
 import android.graphics.RectF;
-import android.graphics.Shader;
 import android.text.SpannableString;
 import android.text.Spanned;
 import android.text.style.ForegroundColorSpan;
@@ -51,6 +49,7 @@ public class QuickPanel extends FrameLayout {
 
     private final View veil;
     private final Body body;
+    private final TextView hintView;
     private final Tile[] tiles = new Tile[TILES];
     private Listener listener;
     private boolean open;
@@ -59,6 +58,7 @@ public class QuickPanel extends FrameLayout {
     private View prevFocus;
     private ObjectAnimator bumpAnim;
     private Tile bumpTile;
+    private Theme appliedTheme;
 
     public QuickPanel(Context c) {
         super(c);
@@ -69,7 +69,7 @@ public class QuickPanel extends FrameLayout {
         setClipChildren(false);
 
         veil = new View(c);
-        veil.setBackgroundColor(Color.BLACK);
+        veil.setBackgroundColor(Theme.cur().veil);
         veil.setAlpha(0f);
         addView(veil, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
 
@@ -92,25 +92,41 @@ public class QuickPanel extends FrameLayout {
         }
 
         TextView hint = new TextView(c);
+        hintView = hint;
         hint.setIncludeFontPadding(false);
         hint.setSingleLine(true);
         hint.setGravity(Gravity.CENTER_HORIZONTAL);
         hint.setTextSize(TypedValue.COMPLEX_UNIT_PX, Ui.px(Ui.T_CAPTION2));
         hint.setTypeface(Ui.regular());
         hint.setLetterSpacing(Ui.tracking(Ui.T_CAPTION2));
-        hint.setTextColor(Ui.TEXT3);
-        SpannableString s = new SpannableString(HINT);
-        for (String key : new String[] {"Menu", "Back", "Home"}) {
-            int at = HINT.indexOf(key);
-            s.setSpan(new ForegroundColorSpan(Ui.TEXT2), at, at + key.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-            s.setSpan(new TypefaceSpan(Ui.medium()), at, at + key.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        }
-        hint.setText(s);
         hint.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
         LayoutParams hlp = new LayoutParams(Ui.px(Ui.PANEL_W), ViewGroup.LayoutParams.WRAP_CONTENT);
         hlp.leftMargin = pad;
         hlp.topMargin = pad + Math.round(Ui.pxf(Ui.PANEL_HINT_BASELINE - Ui.PANEL_Y - Ui.T_CAPTION2 * HINT_TOP_FACTOR));
         body.addView(hint, hlp);
+        applyTheme();
+    }
+
+    /**
+     * Re-tints the veil, the thick-glass panel, the hint line and the four tiles for Theme.cur() (colours change only
+     * here, never animated). Idempotent (early return on the same palette) and ends with invalidate().
+     */
+    public void applyTheme() {
+        Theme t = Theme.cur();
+        if (t == appliedTheme) return;
+        appliedTheme = t;
+        veil.setBackgroundColor(t.veil);                              // the view alpha (PANEL_VEIL_ALPHA) is animated by open()
+        hintView.setTextColor(t.text3);
+        SpannableString s = new SpannableString(HINT);
+        for (String key : new String[] {"Menu", "Back", "Home"}) {
+            int at = HINT.indexOf(key);
+            s.setSpan(new ForegroundColorSpan(t.text2), at, at + key.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            s.setSpan(new TypefaceSpan(Ui.medium()), at, at + key.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
+        hintView.setText(s);
+        body.applyTheme();
+        for (int i = 0; i < TILES; i++) tiles[i].applyTheme();
+        invalidate();
     }
 
     public void setListener(Listener l) { listener = l; }
@@ -292,7 +308,7 @@ public class QuickPanel extends FrameLayout {
 
     /** Glass body (x 460..1460, y 60..376 plus the drop-shadow pad); samples the wallpaper at its real screen position. */
     private static final class Body extends FrameLayout {
-        private final Glass glass = new Glass(Ui.PANEL_R, Ui.GLASS_THICK, 1f);
+        private final Glass glass = new Glass(Ui.PANEL_R, Theme.cur().glassThick, 1f);
         private final int[] loc = new int[2];
         private final int screenW, screenH, pad;
         private Bitmap wallpaper;
@@ -312,6 +328,11 @@ public class QuickPanel extends FrameLayout {
 
         void setWallpaper(Bitmap b) {
             wallpaper = b;
+            invalidate();
+        }
+
+        void applyTheme() {
+            glass.applyTheme(Theme.cur().glassThick);
             invalidate();
         }
 
@@ -353,6 +374,7 @@ public class QuickPanel extends FrameLayout {
         private final int pad, tilePx, iconBox;
         private final Paint fillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint rimPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint outlinePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint iconPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint subPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -366,6 +388,7 @@ public class QuickPanel extends FrameLayout {
         private String[] lines = {""};
         private String sub;
         private Bitmap shadow;
+        private Theme rimTheme;
         private float p;                                               // focus colour / shadow progress 0..1
         private boolean focused;
         private ValueAnimator colourAnim;
@@ -377,6 +400,7 @@ public class QuickPanel extends FrameLayout {
             tilePx = Ui.px(Ui.PANEL_TILE);
             iconBox = Ui.px(Ui.PANEL_ICON);
             icon = Glyphs.forTile(index, iconBox);
+            outlinePaint.setStyle(Paint.Style.STROKE);
             iconPaint.setStyle(Paint.Style.STROKE);
             iconPaint.setStrokeWidth(Glyphs.strokeWidth(iconBox));
             iconPaint.setStrokeCap(Paint.Cap.ROUND);
@@ -469,21 +493,23 @@ public class QuickPanel extends FrameLayout {
             rimRadius = Math.max(0f, radius - stroke / 2f);
             rimPaint.setStyle(Paint.Style.STROKE);
             rimPaint.setStrokeWidth(stroke);
-            double a = Math.toRadians(Ui.GLASS_RIM_ANGLE);
-            float dx = (float) Math.sin(a), dy = (float) -Math.cos(a);
-            float len = Math.abs(tilePx * dx) + Math.abs(tilePx * dy);
-            float cx = rect.centerX(), cy = rect.centerY();
-            int white = 0xFFFFFF;
-            rimPaint.setShader(new LinearGradient(cx - dx * len / 2f, cy - dy * len / 2f, cx + dx * len / 2f, cy + dy * len / 2f,
-                new int[] {Ui.argb(Ui.GLASS_RIM_HI, white), Ui.argb(Ui.GLASS_RIM_LO, white),
-                    Ui.argb(Ui.GLASS_RIM_LO, white), Ui.argb(Ui.GLASS_RIM_END, white)},
-                new float[] {0f, Ui.GLASS_RIM_MIDLO_STOP, Ui.GLASS_RIM_MIDHI_STOP, 1f}, Shader.TileMode.CLAMP));
+            rimTheme = null;
+            applyTheme();
             shadow = shadowBitmap(tilePx, pad, radius);
-            shadowPaint.setColor(Ui.SHADOW);
             iconX = rect.left + (tilePx - iconBox) / 2f;
             iconY = rect.top + Ui.px(Ui.PANEL_ICON_TOP);
             textX = rect.centerX();
             layoutText();
+        }
+
+        /** Rebuilds the rim gradient for Theme.cur() (the only palette-dependent paint object); idempotent. */
+        void applyTheme() {
+            Theme t = Theme.cur();
+            if (t == rimTheme) return;
+            rimTheme = t;
+            if (rect.isEmpty()) return;                                // onSizeChanged applies it
+            rimPaint.setShader(Glass.rimShader(t, rect.centerX(), rect.centerY(), tilePx, tilePx));
+            invalidate();
         }
 
         /** One ALPHA_8 bitmap shared by the four tiles: blurred rounded rect, shifted down, interior cut out. */
@@ -517,17 +543,27 @@ public class QuickPanel extends FrameLayout {
 
         @Override
         protected void onDraw(Canvas c) {
+            Theme t = Theme.cur();
             if (p > Ui.DRAW_MIN_PROGRESS && shadow != null) {
-                shadowPaint.setAlpha(Math.round(Color.alpha(Ui.SHADOW) * p));
+                shadowPaint.setColor(t.shadow);
+                shadowPaint.setAlpha(Math.round(Color.alpha(t.shadow) * p));
                 c.drawBitmap(shadow, 0f, 0f, shadowPaint);
             }
-            fillPaint.setColor(lerp(Ui.GLASS_THIN, Ui.BTN_FOCUS_FILL, p));
+            // light: unfocused tiles keep a visible shape (mockup: rgba(27,27,31,.07) + 2 px inset ctl-outline)
+            fillPaint.setColor(lerp(t.light ? Theme.argb(.07f, 0x1B1B1F) : t.glassThin, t.btnFocusFill, p));
             c.drawRoundRect(rect, radius, radius, fillPaint);
+            if (t.light && p < 0.999f) {
+                float o = Math.max(2f, Ui.pxf(2));
+                outlinePaint.setStrokeWidth(o);
+                outlinePaint.setColor(Theme.argb(Color.alpha(t.ctlOutline) / 255f * (1f - p), t.ctlOutline));
+                c.drawRoundRect(rect.left + o / 2f, rect.top + o / 2f, rect.right - o / 2f, rect.bottom - o / 2f,
+                    Math.max(0f, radius - o / 2f), Math.max(0f, radius - o / 2f), outlinePaint);
+            }
             if (p < 0.999f) {
                 rimPaint.setAlpha(Math.round(255f * Ui.PANEL_RIM_ALPHA * (1f - p)));
                 c.drawRoundRect(rimRect, rimRadius, rimRadius, rimPaint);
             }
-            int ink = lerp(Ui.TEXT, Ui.BTN_FOCUS_TEXT, p);
+            int ink = lerp(t.text, t.btnFocusText, p);
             iconPaint.setColor(ink);
             int save = c.save();
             c.translate(iconX, iconY);
