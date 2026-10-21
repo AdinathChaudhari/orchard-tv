@@ -152,3 +152,40 @@ Home on Fire source and the Mac toolchain directly.
    tv.orchard.home/.HomeActivity`; from any app, Home then lands on Orchard.
 9. **Measure janky frames only after the screen settles.** The first dock sweep within ~4 s of a `debug_time`
    switch reads 30-57 % janky because it counts the switch's own frames; wait 20 s after a switch.
+10. **Every halo is a baked sprite, drawn ONCE.** Baking the blur alone did not fix the 18:10 dock sweep (Janky 10-13 %): the fill
+    cost is the 4 stacked draws per sprite plus two full-screen backdrops. `Halo` now bakes the compound alpha 1-(1-ts*m)^4 into
+    the ALPHA_8 sprite (`HaloMath.compoundLut`, per ts step of 1/64, rebuilt in place only when the step changes on the minute
+    tick; the mask stays as a byte[]) and draws it once in the opaque halo colour. Path halos (status-strip menu icon) work the
+    same, keyed by (path id, stroke width, radius). Text and path sprites live in `SpriteLru` (hard caps on count AND bytes, text
+    96 / 6 MB, path 6 / 512 KB, mask counted too), evicted sprites recycled a second later.
+    A/B on the TV (scratch builds): baseline 9.8 / 10.1 / 14.8 %, halos off 7.7 / 7.5 / 4.0 %, hero light bake off 6.1 / 5.4 / 5.7 %,
+    both off 2.3 / 1.7 / 5.4 %. The two costs add. Re-measure after this change: 18:10 and 06:00, 3 spaced runs each, < 10 %.
+11. **Settled dusk / dawn draws ONE hero backdrop bitmap.** At 18:10 the mix is p = 0.03 (nearly all dark) yet both quarter-res
+    bakes (and both overlays) were drawn per layer: four full-screen fills, almost all invisible. `TopShelfView.settleMix`
+    pre-composites bakeD x darkA over bakeL x lightA into `bakeMix` (and the overlays into `overlayMix`) once the mix has settled
+    (`OverlayRules.useMixBake`: not animating, alphas equal targets, both above EPS), frees the two source bakes, and draws only
+    the mix. A target change nulls it; the two-bitmap path runs only while `mixAnim` does.
+12. **Bound every cache, recycle what the view built, trim when idle.** Phase-jump trim worked (83 MB after each cycle) but a
+    sweep still read 114-123 MB right after (Native 43 MB, GL mtrack 57, Skia scratch 22 in 68 entries) and settled at 102 after
+    30-45 s. Changes: `ArtCache` shelf sets are a `SpriteLru` (8 sets AND 10 MB: with 2, every key of a dock sweep re-decoded an xxxhdpi banner, ~+21 MB native garbage, 121 MB PSS right after a sweep; with 8 the whole dock stays cached and the sweep reads 101 MB); `TopShelfView` recycles the bakes it built
+    (bakeD / bakeL / bakeMix / overlays) one second after dropping them instead of leaving them to the GC; and `HomeActivity`
+    runs one settle step 2.5 s after the last key or phase jump (`GpuTrim` = reflective
+    `WindowManagerGlobal.trimMemory(TRIM_MEMORY_BACKGROUND)`, else `View.destroyHardwareResources`, else nothing; remembers a
+    hidden-API block; then one GC). Not done: `inSampleSize` for banner decode (the banner comes through `Drawable.draw` at
+    <= 640x360, there is no decode call to set it on) and a saveLayer audit (the code has no saveLayer; the scratch entries come
+    from framework layers). Verify: 12:00 -> 18:10 -> 22:00 -> 06:00 x3 + six sweeps, `dumpsys meminfo` right after the sixth, <= 110 MB.
+13. **One time provider for every clock, and Settings follows the channel.** `TimeSource.now/minute/pinned` is the only path from
+    `debug_time` to a displayed time (`Ambient.clockMs`, greeting, `ClockFace`, Settings `sunsetDetail`). Settings built its own
+    `StatusStrip` and never pinned it, then kept the pin after `debug_time` was cleared. It now registers a screen listener on
+    `OrchardApp` (run by `notifySettingsChanged`, so a broadcast `set/unset` reaches it) and runs `refreshSky` on every minute tick.
+    An anonymous `Runnable` field made d8 8.2.2 crash here; use a method reference.
+14. **Size dialogs to content; hide, don't overlap.** `OverlayRules.sheetMinHeight` drops the 420 floor for a one-line body. With
+    the Quick Panel open the status pill is hidden when it would reach the panel (`hideChip`) and so are the greeting and its dot
+    when their span meets the panel's span (`OverlayRules.overlaps`; the greeting sits at x 1350-1460, under the panel's right edge).
+15. **Label contrast must be measured against the pixels behind the glass.** The first version fed `Contrast.veilAlpha` the glass fill
+    over `Theme.scrim()` (a theme token), so the host test passed while the TV read 2.3:1 at 06:00 and 18:10 (the token is a dark
+    night colour; the real horizon sky is a mid-luminance red). `TileView.skyUnderLabel` now averages the blurred 240x135 backdrop
+    slice (`Contrast.meanRgb`, rows under the label, cached per slice and 8 px of vertical position), composites the glass fill over
+    it, picks the ink and then the smallest veil to `Contrast.SAMPLED` (5.4, AA plus sampling margin; 4.8 still read 4.15-4.68:1 on the TV at 18:10). `HomeActivity.onSlice` feeds
+    the tile. Host test `ContrastTest` sweeps coarse RGB skies through both themes and proves the old token backdrop picks an ink
+    that fails on a horizon sky. Verify by measuring label pixels on the TV at 06:00, 12:00, 18:10, 22:00 (>= 4.5:1 each).

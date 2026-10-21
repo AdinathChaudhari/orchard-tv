@@ -213,7 +213,10 @@ public class ConfirmSheet extends FrameLayout {
     private void setTexts(String title, String body, String keeps) {
         titleView.setText(title);
         bodyView.setText(body);
-        if (keeps == null || keeps.isEmpty()) {
+        boolean hasKeeps = keeps != null && !keeps.isEmpty();
+        card.setMinimumHeight(OverlayRules.sheetMinHeight(hasKeeps, Ui.px(Ui.SHEET_H_MIN)) == 0 ? 0
+                : Ui.px(Ui.SHEET_H_MIN) + 2 * Glass.shadowPad());
+        if (!hasKeeps) {
             keepsView.setVisibility(GONE);
         } else {
             keepsView.setText(keeps);

@@ -93,9 +93,9 @@ Six of the 33 listed packages stay enabled because Fire OS refuses to disable th
 
 <table>
   <tr>
-    <td><img src="docs/media/screenshot-real-home.jpg" alt="Home: Netflix focused, Top Shelf lit red" width="360"></td>
-    <td><img src="docs/media/screenshot-real-shelf.jpg" alt="Top Shelf follows focus: JioHotstar lit blue" width="360"></td>
-    <td><img src="docs/media/screenshot-real-grid.jpg" alt="App grid: Spotify focused" width="360"></td>
+    <td><img src="docs/media/screenshot-real-home.jpg" alt="Home at noon: Netflix focused, pale daytime sky, Top Shelf lit red" width="360"></td>
+    <td><img src="docs/media/screenshot-real-shelf.jpg" alt="Top Shelf follows focus at 18:10: JioHotstar lit blue over the dusk sky" width="360"></td>
+    <td><img src="docs/media/screenshot-real-grid.jpg" alt="App grid at night: Spotify focused, green glow under the night sky" width="360"></td>
   </tr>
 </table>
 
@@ -170,12 +170,20 @@ The wallpaper is a sky chosen by the sun's elevation over your city, computed on
 
 <table align="center">
   <tr>
-    <td><img src="docs/media/screenshot-real-panel-light.jpg" alt="Quick Panel over the light daytime theme" width="430"></td>
-    <td><img src="docs/media/screenshot-real-settings-dark.jpg" alt="Settings in the dark night theme" width="430"></td>
+    <td><img src="docs/media/settings-light.jpg" alt="Settings at noon in the light theme: Theme, Weather, Units, City, Screensaver, Dock apps, Hidden apps, Tile labels, Wallpaper, Reduced motion, Clock" width="430"></td>
+    <td><img src="docs/media/settings-dark.jpg" alt="The same Settings at 22:00 in the dark night theme" width="430"></td>
   </tr>
   <tr>
-    <td align="center"><em>Quick Panel at noon, light theme.</em></td>
-    <td align="center"><em>Settings at night, dark theme.</em></td>
+    <td align="center"><em>Settings at noon, light theme.</em></td>
+    <td align="center"><em>The same screen at 22:00, dark theme.</em></td>
+  </tr>
+  <tr>
+    <td><img src="docs/media/screenshot-real-panel-light.jpg" alt="Quick Panel over the light daytime theme" width="430"></td>
+    <td><img src="docs/media/settings-city.jpg" alt="City picker with Bengaluru selected and each city's sunset time" width="430"></td>
+  </tr>
+  <tr>
+    <td align="center"><em>Quick Panel at noon.</em></td>
+    <td align="center"><em>City picker: each city shows today's sunset.</em></td>
   </tr>
 </table>
 

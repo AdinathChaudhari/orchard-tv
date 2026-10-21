@@ -9,6 +9,7 @@ public class OrchardApp extends Application {
     private Config config;
     private int settingsEpoch;
     private Runnable settingsListener;
+    private Runnable settingsScreenListener;
 
     @Override
     public void onCreate() {
@@ -27,10 +28,13 @@ public class OrchardApp extends Application {
     public void bumpSettingsEpoch() { settingsEpoch++; }
     /** Main thread. Registered by HomeActivity; run by notifySettingsChanged(). */
     public void setSettingsListener(Runnable r) { settingsListener = r; }
+    /** Main thread. Registered by a visible SettingsActivity (null when it stops): debug_time cleared or set under it. */
+    public void setSettingsScreenListener(Runnable r) { settingsScreenListener = r; }
     /** Bumps the epoch and tells a live HomeActivity to re-evaluate (ArtCache placeholder, tiles, shelf) without a restart. */
     public void notifySettingsChanged() {
         settingsEpoch++;
         if (settingsListener != null) settingsListener.run();
+        if (settingsScreenListener != null) settingsScreenListener.run();
     }
     public ArtCache art() { return art; }
 

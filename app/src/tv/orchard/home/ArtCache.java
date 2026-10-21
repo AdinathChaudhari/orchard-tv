@@ -64,7 +64,11 @@ public final class ArtCache {
     private static final int GLOW_STACK_RADIUS = 12;
     public static final int GLOW_PAD_X = 32, GLOW_PAD_Y = 18;
     private static final int BLEED_STACK_RADIUS = 11;     // = Ui.HERO_BL_BLUR
-    private static final int MAX_SHELF_SETS = 2;
+    // Shelf sets cover the whole dock row (6 apps + slack): with 2, every key of a dock sweep re-decoded the xxxhdpi
+    // banner (~3.7 MB of native garbage per key) and the sweep peaked at 121 MB PSS before the GC caught up. A set is
+    // <= ~1.2 MB (banner <= 640x360 + two 240x135 blurs), so 8 sets stay under the 10 MB byte ceiling.
+    private static final int MAX_SHELF_SETS = 8;
+    private static final long MAX_SHELF_BYTES = 10L << 20;  // hard byte ceiling for the shelf sets (count AND bytes are capped)
     private static final Charset UTF8 = Charset.forName("UTF-8");
 
     /** Per-package colour facts; never evicted, immutable once built. */
@@ -189,7 +193,7 @@ public final class ArtCache {
     private final TileLru tiles;
     private final Map<String, Meta> metas = new ConcurrentHashMap<String, Meta>();
     private final Map<String, List<Waiter>> pending = new HashMap<String, List<Waiter>>();
-    private final List<ShelfSet> shelves = new ArrayList<ShelfSet>();
+    private final SpriteLru<String, ShelfSet> shelves = new SpriteLru<String, ShelfSet>(MAX_SHELF_SETS, MAX_SHELF_BYTES);
     private final AtomicInteger generation = new AtomicInteger();
     private final Meta defaultMeta;
     private ExecutorService executor;
@@ -273,12 +277,9 @@ public final class ArtCache {
     private ShelfSet shelfSet(AppEntry e) {
         if (e == null) return null;
         synchronized (shelves) {
-            for (int i = shelves.size() - 1; i >= 0; i--) {
-                ShelfSet s = shelves.get(i);
-                if (s.pkg.equals(e.packageName) && complete(s)) return s;
-            }
+            ShelfSet s = shelves.get(e.packageName);
+            return s != null && complete(s) ? s : null;
         }
-        return null;
     }
 
     private boolean complete(ShelfSet s) {
@@ -353,6 +354,8 @@ public final class ArtCache {
         return executor;
     }
 
+    private static long bytesOf(Bitmap b) { return b == null ? 0L : b.getByteCount(); }
+
     /** Evict the tile LRU and both shelf sets; colour meta stays. */
     public void trim() {
         tiles.evictAll();
@@ -365,9 +368,7 @@ public final class ArtCache {
         generation.incrementAndGet();
         tiles.remove(pkg);
         metas.remove(pkg);
-        synchronized (shelves) {
-            for (int i = shelves.size() - 1; i >= 0; i--) if (shelves.get(i).pkg.equals(pkg)) shelves.remove(i);
-        }
+        synchronized (shelves) { shelves.remove(pkg); }
         executor().execute(() -> deleteDisk(pkg, null));
     }
 
@@ -765,10 +766,10 @@ public final class ArtCache {
             drawPlate(new Canvas(emblem), emblem.getWidth(), emblem.getHeight(), ph ? null : emblemIcon(pm, e), m.vivid, EMBLEM_PLATE, e.label, e.packageName);
         }
         if (gen != generation.get()) return;
+        long bytes = bytesOf(emblem) + bytesOf(shelf) + bytesOf(glow) + bytesOf(bleed);
         synchronized (shelves) {
-            for (int i = shelves.size() - 1; i >= 0; i--) if (shelves.get(i).pkg.equals(e.packageName)) shelves.remove(i);
-            shelves.add(new ShelfSet(e.packageName, emblem, shelf, glow, bleed, nb, nbl));
-            while (shelves.size() > MAX_SHELF_SETS) shelves.remove(0);
+            shelves.put(e.packageName, new ShelfSet(e.packageName, emblem, shelf, glow, bleed, nb, nbl),
+                    (int) Math.min(Integer.MAX_VALUE, bytes));     // evicted sets are only dropped: a view may still hold the bitmap
         }
     }
 

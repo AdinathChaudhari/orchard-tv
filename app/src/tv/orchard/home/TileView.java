@@ -170,6 +170,51 @@ public class TileView extends View {
     }
 
     public boolean isFireTvHome() { return fireTvHome; }
+
+    // Fire TV Home label contrast is computed against the real sky behind the glass: the blurred 240x135 backdrop slice
+    // (the same sky the dock glass blurs), averaged over the label's rows, not the theme's flat scrim token.
+    private Bitmap backdropSlice;
+    private int backdropGen, sampledGen = -1, sampledKey = Integer.MIN_VALUE, sampledRgb;
+    private final int[] locBuf = new int[2];
+    private int[] sliceRow;
+
+    /** New backdrop slice (contents changed). Fire TV Home tile only; null falls back to Theme.scrim(). */
+    public void setBackdrop(Bitmap slice) {
+        if (!fireTvHome) return;
+        backdropSlice = slice;
+        backdropGen++;
+        invalidate();
+    }
+
+    /** Mean rgb of the slice under the label (cached per slice and 8 px of vertical position); Theme.scrim() when unknown. */
+    private int skyUnderLabel() {
+        Bitmap b = backdropSlice;
+        View root = getRootView();
+        if (b == null || b.isRecycled() || root == null || root.getWidth() <= 0 || root.getHeight() <= 0) return Theme.scrim();
+        getLocationOnScreen(locBuf);
+        int key = (locBuf[1] >> 3) * 4096 + (locBuf[0] >> 3);
+        if (sampledGen == backdropGen && sampledKey == key) return sampledRgb;
+        float half = caption.measureText(label) / 2f + Ui.pxf(8);
+        float cx = locBuf[0] + getWidth() / 2f;
+        float top = locBuf[1] + captionBaseline + caption.getFontMetrics().ascent - Ui.pxf(4);
+        float bot = locBuf[1] + captionBaseline + caption.getFontMetrics().descent + Ui.pxf(4);
+        float sx = b.getWidth() / (float) root.getWidth(), sy = b.getHeight() / (float) root.getHeight();
+        int x0 = (int) Math.floor((cx - half) * sx), x1 = (int) Math.ceil((cx + half) * sx);
+        int y0 = (int) Math.floor(top * sy), y1 = (int) Math.ceil(bot * sy);
+        x0 = Math.max(0, x0); y0 = Math.max(0, y0); x1 = Math.min(b.getWidth(), x1); y1 = Math.min(b.getHeight(), y1);
+        int w = x1 - x0, h = y1 - y0;
+        int rgb = Theme.scrim();
+        if (w > 0 && h > 0) {
+            if (sliceRow == null || sliceRow.length < w * h) sliceRow = new int[w * h];
+            b.getPixels(sliceRow, 0, w, x0, y0, w, h);
+            int m = Contrast.meanRgb(sliceRow, w, 0, 0, w, h);
+            if (m != -1) rgb = m;
+        }
+        sampledGen = backdropGen;
+        sampledKey = key;
+        sampledRgb = rgb;
+        return rgb;
+    }
     public AppEntry entry() { return entry; }
     public String label() { return label; }
 
@@ -648,7 +693,6 @@ public class TileView extends View {
                 colors, pos, Shader.TileMode.CLAMP);
     }
 
-    private static final float FTH_BOOST_ALPHA = 0.30f;
     private final Paint fthBoost = new Paint(Paint.ANTI_ALIAS_FLAG);
 
     // ---- drawing (no allocation) ------------------------------------------------------------------------
@@ -662,12 +706,14 @@ public class TileView extends View {
             if (p < 1f) {                                                // caption hidden while focused
                 Theme th = Theme.cur();
                 // glass fill over whatever is behind it; keep the caption >= 4.5:1 in light horizon phases
-                int bgA = Contrast.over(th.fthFillA, Theme.scrim()), bgB = Contrast.over(th.fthFillB, Theme.scrim());
+                int sky = skyUnderLabel();
+                int bgA = Contrast.over(th.fthFillA, sky), bgB = Contrast.over(th.fthFillB, sky);
                 int ci = Contrast.pickInk(Theme.rise(th.text2), bgA, bgB, Theme.LIGHT.textHi, 0xFFFFFFFF);
                 caption.setColor((ci & 0xFFFFFF) | (Math.round((ci >>> 24) * (1f - p)) << 24));
-                if (Contrast.worst(ci | 0xFF000000, bgA, bgB) < Contrast.AA) {   // twilight horizons: neither ink clears 4.5:1 on the glass alone
-                    boolean inkDark = Contrast.luminance(ci) < 0.5;                // so lay a veil of the opposite tone under the label
-                    fthBoost.setColor((inkDark ? 0xFFFFFFFF : 0xFF000000) & 0xFFFFFF | (Math.round(255f * FTH_BOOST_ALPHA * (1f - p)) << 24));
+                int veilA = Contrast.veilAlpha(ci, bgA, bgB, Contrast.SAMPLED);                    // twilight horizons: lay the smallest opposite-tone veil that reaches 4.5:1
+                if (veilA > 0) {
+                    boolean inkDark = Contrast.luminance(ci) < 0.5;
+                    fthBoost.setColor((inkDark ? 0xFFFFFF : 0x000000) | (Math.round(veilA * (1f - p)) << 24));
                     canvas.drawRoundRect(outer, radius, radius, fthBoost);
                 }
                 Halo.drawText(canvas, label, getWidth() / 2f, captionBaseline, caption, haloScratch);

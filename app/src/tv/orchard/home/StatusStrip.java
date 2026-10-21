@@ -41,6 +41,7 @@ public class StatusStrip extends View {
     private final Paint scratch = new Paint(Paint.ANTI_ALIAS_FLAG);       // Halo scratch
     private final Paint bmpPaint = new Paint(Paint.FILTER_BITMAP_FLAG);
     private final Path iconPath = new Path();
+    private int iconPathId = 1;               // Halo sprite key; bumped whenever iconPath is rebuilt
     private final RectF chipRect = new RectF();
     private final RectF chipRimRect = new RectF();
     private final ValueAnimator fade = ValueAnimator.ofFloat(0f, 1f);
@@ -220,7 +221,7 @@ public class StatusStrip extends View {
         relayout();
     }
 
-    /** Panel or sheet open: the chip is not drawn but keeps its layout, so nothing moves (CSS visibility:hidden). */
+    /** Panel or sheet open: the weather chip (and the status pill, when it would reach the panel) is not drawn but keeps its layout, so nothing moves (CSS visibility:hidden). */
     public void setWeatherHidden(boolean hidden) {
         if (hidden == wxHidden) return;
         wxHidden = hidden;
@@ -342,6 +343,7 @@ public class StatusStrip extends View {
         float iconSize = Ui.pxf(ICON), k = iconSize / 24f;
         float ix = Ui.pxf(Ui.SAFE_X), iy = cy - iconSize / 2f;
         iconPath.rewind();
+        iconPathId++;
         for (int i = 0; i < 3; i++) {                      // 'M4 7h16 M4 12h16 M4 17h16'
             float y = iy + (7 + 5 * i) * k;
             iconPath.moveTo(ix + 4 * k, y);
@@ -426,10 +428,10 @@ public class StatusStrip extends View {
             canvas.drawRect(0, 0, getWidth(), getHeight(), scrimPaint);
         }
         if (hintVisible) {
-            Halo.drawPath(canvas, iconPath, iconPaint, scratch);
+            Halo.drawPath(canvas, iconPathId, iconPath, iconPaint, scratch);
             Halo.drawText(canvas, "Options", hintX, hintBase, hintPaint, scratch);
         }
-        if (chip != null) {
+        if (chip != null && !OverlayRules.hideChip(wxHidden, chipRect.right, Ui.pxf(Ui.PANEL_X), Ui.pxf(CHIP_GAP))) {
             canvas.drawRoundRect(chipRect, chipRadius, chipRadius, chipFill);
             canvas.drawRoundRect(chipRimRect, chipRadius, chipRadius, chipRim);
             Halo.drawText(canvas, chip, chipRect.left + Ui.pxf(CHIP_PAD_H), chipBase, chipText, scratch);
@@ -442,7 +444,10 @@ public class StatusStrip extends View {
             if (!wxCapDraw.isEmpty()) Halo.drawText(canvas, wxCapDraw, wxCapX, wxCapBase, capPaint, scratch);
         }
         if (clockVisible) {
-            if (greeting != null) {
+            // with the Quick Panel open the greeting (and its dot) would sit under the panel's glass: hide it like the pill
+            boolean greetUnderPanel = greeting != null && OverlayRules.overlaps(wxHidden, greetX, dotX + greetPaint.measureText(DOT),
+                    Ui.pxf(Ui.PANEL_X), Ui.pxf(Ui.PANEL_X + Ui.PANEL_W), Ui.pxf(CHIP_GAP));
+            if (greeting != null && !greetUnderPanel) {
                 Halo.drawText(canvas, greeting, greetX, clockBase, greetPaint, scratch);
                 Halo.drawText(canvas, DOT, dotX, clockBase, greetPaint, scratch);
             }

@@ -196,6 +196,18 @@ public class HomeActivity extends Activity {
         if (panel != null) panel.setWallpaper(b);
         if (sheet != null) sheet.setWallpaper(b);
         if (menu != null) menu.setWallpaper(b);
+        feedBackdrop();
+    }
+
+    /** Hands the current backdrop slice to the Fire TV Home tile so its label contrast is computed against the real sky. */
+    private void feedBackdrop() {
+        for (int r = 0; r < rows.size(); r++) {
+            TileRow row = rows.get(r);
+            for (int i = 0; i < row.tileCount(); i++) {
+                TileView t = row.tileAt(i);
+                if (t.isFireTvHome()) t.setBackdrop(lastSlice);
+            }
+        }
     }
 
     /** One entry per tile slot; null = the Fire TV Home tile. */
@@ -258,6 +270,7 @@ public class HomeActivity extends Activity {
                 TileView t = new TileView(this);
                 if (e == null) {
                     t.bindFireTvHome(getString(R.string.firetv_home));
+                    t.setBackdrop(lastSlice);
                 } else {
                     t.bind(e);
                     bindArt(t, e);
@@ -326,11 +339,27 @@ public class HomeActivity extends Activity {
     /** Any key / resume / rebuild: undim if dimmed, then re-arm the idle timer (not in reduced motion or with an overlay open). */
     private void wake() {
         idleHandler.removeCallbacks(idleTick);
+        scheduleSettleTrim();
         if (idle) {
             setAllIdle(false);
             idle = false;
         }
         if (!reducedMotion && !overlayOpen() && movingPkg == null) idleHandler.postDelayed(idleTick, Ui.ms(Ui.IDLE_MS));
+    }
+
+    /** 2.5 s after the last key / phase jump: release the render thread's scratch caches and collect once. Main thread. */
+    private static final long SETTLE_TRIM_MS = 2500L;
+    private final Runnable settleTrim = this::doSettleTrim;
+
+    private void scheduleSettleTrim() {
+        idleHandler.removeCallbacks(settleTrim);
+        if (!released && resumed) idleHandler.postDelayed(settleTrim, SETTLE_TRIM_MS);
+    }
+
+    private void doSettleTrim() {
+        if (released || !resumed || root == null) return;
+        GpuTrim.trim(getWindow().getDecorView());
+        Runtime.getRuntime().gc();
     }
 
     private void goIdle() {
@@ -1085,8 +1114,21 @@ public class HomeActivity extends Activity {
     // ---- ambient (Rev 4 to 6) -----------------------------------------------------------------------------
 
     /** One AmbientState per minute (or on a change): theme, backdrop, strip chip + greeting, rain. Main thread. */
+    private static final int PHASE_JUMP_MIN = 90;
+    private int prevAmbientMinute = -1;
+
     private void onAmbient(AmbientState s) {
         if (root == null || safe) return;
+        if (OverlayRules.largePhaseJump(prevAmbientMinute, s.minute, PHASE_JUMP_MIN)) {
+            // debug_time switch / clock set: the old phase's halo sprites and sky keyframes are dead weight; free them
+            // now and collect once, so graphics memory does not climb across repeated jumps.
+            Halo.onPhaseJump();
+            if (sky != null) sky.trim();
+            idleHandler.removeCallbacks(gcAfterStop);
+            idleHandler.postDelayed(gcAfterStop, 2500L);
+            scheduleSettleTrim();
+        }
+        prevAmbientMinute = s.minute;
         boolean userThemeChange = prevThemeMode >= 0 && prevThemeMode != s.themeMode;
         prevThemeMode = s.themeMode;
         if (Theme.set(s.light, s.ts, s.tn)) {
@@ -1203,6 +1245,7 @@ public class HomeActivity extends Activity {
         // PLAN 0.5 / matrix row 12: nothing animates while paused. Sway stopped, idle timer cancelled. Tiles are
         // left dimmed on purpose (no extra un-dim animators while an app is in front); onResume's wake() undims.
         idleHandler.removeCallbacks(idleTick);
+        idleHandler.removeCallbacks(settleTrim);
         for (int i = 0; i < rows.size(); i++) rows.get(i).stopSway();
         super.onPause();
     }

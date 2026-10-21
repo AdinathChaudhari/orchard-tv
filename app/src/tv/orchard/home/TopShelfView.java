@@ -43,6 +43,8 @@ public class TopShelfView extends View {
         Bitmap bleedBmp;         // hero=blur
         Bitmap bakeD;            // dark-token wash x fade (+ bleed when hero=blur), quarter resolution ARGB; null until needed
         Bitmap bakeL;            // the same from the light tokens; null until needed
+        Bitmap bakeMix;          // settled dusk / dawn: bakeD x darkA over bakeL x lightA pre-composited (bakeD / bakeL are then freed)
+        float mixDA, mixLA;      // the alphas bakeMix was composed with
         int glowKind = GLOW_NONE;
         int glowTier = TIER_BITMAP;   // which Theme hero*GlowAlpha applies
         float cardA = 1f;        // card fade-in (late art)
@@ -67,8 +69,12 @@ public class TopShelfView extends View {
             art = null;
             glowBmp = null;
             bleedBmp = null;
+            freeBake(bakeD);
+            freeBake(bakeL);
+            freeBake(bakeMix);
             bakeD = null;
             bakeL = null;
+            bakeMix = null;
             glowKind = GLOW_NONE;
             bleed.setShader(null);
             card.setShader(null);
@@ -100,6 +106,7 @@ public class TopShelfView extends View {
     private final Paint overlayP = new Paint(Paint.FILTER_BITMAP_FLAG);
     private Bitmap overlay;                // dark tokens: light leak + both vignettes in one quarter-resolution ARGB bitmap (null until needed)
     private Bitmap overlayL;               // the same from the light tokens (null until needed)
+    private Bitmap overlayMix;             // settled dusk / dawn: overlay x darkA over overlayL x lightA in one bitmap
     private final RectF fullDst = new RectF();
     private final Paint shadowP = new Paint(Paint.FILTER_BITMAP_FLAG);
     private final Paint rim = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -186,6 +193,9 @@ public class TopShelfView extends View {
         tDarkA = d;
         tLightA = l;
         tMixP = p;
+        freeBake(overlayMix);
+        overlayMix = null;                                             // the targets moved: the pre-composite is stale
+        for (Layer ly : layers) { freeBake(ly.bakeMix); ly.bakeMix = null; }
         ensureAllBakes();                                              // the target's bakes exist before the first frame of the fade
         long dur = Ui.ms(Ui.THEME_HERO_FADE_MS);
         if (!animate || dur <= 0 || !bound || vw <= 0 || !isAttachedToWindow()) {
@@ -217,6 +227,15 @@ public class TopShelfView extends View {
         a.start();
     }
 
+    /** True when the mix is not animating and the live alphas equal the targets (the pre-composite may be used). */
+    private boolean mixSettled() {
+        return mixAnim == null && Math.abs(darkA - tDarkA) < EPS && Math.abs(lightA - tLightA) < EPS;
+    }
+
+    private boolean useMix() {
+        return OverlayRules.useMixBake(mixAnim != null, darkA, lightA, tDarkA, tLightA, EPS);
+    }
+
     private boolean needDark() { return darkA > EPS || tDarkA > EPS; }
     private boolean needLight() { return lightA > EPS || tLightA > EPS; }
 
@@ -228,12 +247,64 @@ public class TopShelfView extends View {
     /** After the mix settled: free the quarter-res bitmaps whose alpha is 0 (they are rebuilt if the mix moves again). */
     private void dropUnusedBakes() {
         boolean nd = needDark(), nl = needLight();
-        if (!nd) overlay = null;
-        if (!nl) overlayL = null;
+        if (!nd) { freeBake(overlay); overlay = null; }
+        if (!nl) { freeBake(overlayL); overlayL = null; }
         for (Layer l : layers) {
-            if (!nd) l.bakeD = null;
-            if (!nl) l.bakeL = null;
+            if (!nd) { freeBake(l.bakeD); l.bakeD = null; }
+            if (!nl) { freeBake(l.bakeL); l.bakeL = null; }
         }
+        settleMix();
+    }
+
+    /**
+     * Settled dusk / dawn (both alphas above EPS): composite the dark and light bakes (and overlays) once and draw that
+     * single bitmap per layer. Two full-screen bitmaps per layer plus two overlays were four fills during a
+     * crossfade that is nearly invisible at 18:10 (p = 0.03); the Stick is fill-bound. The two-bitmap path stays
+     * while mixAnim runs.
+     */
+    private void settleMix() {
+        if (vw <= 0 || vh <= 0 || fadeShader == null || released || !useMix()) return;
+        if (overlayMix == null) {
+            ensureOverlays();
+            if (overlay != null && overlayL != null) {
+                overlayMix = composeMix(overlay, darkA, overlayL, lightA);
+                freeBake(overlay);
+                freeBake(overlayL);
+                overlay = null;
+                overlayL = null;
+            }
+        }
+        for (Layer l : layers) settleMix(l);
+    }
+
+    private void settleMix(Layer l) {
+        if (l.e == null || !useMix()) return;
+        if (l.bakeMix != null && Math.abs(l.mixDA - darkA) < EPS && Math.abs(l.mixLA - lightA) < EPS) return;
+        if (l.bakeD == null) l.bakeD = bakeFor(l, Theme.DARK);
+        if (l.bakeL == null) l.bakeL = bakeFor(l, Theme.LIGHT);
+        l.bakeMix = composeMix(l.bakeD, darkA, l.bakeL, lightA);
+        l.mixDA = darkA;
+        l.mixLA = lightA;
+        freeBake(l.bakeD);
+        freeBake(l.bakeL);
+        l.bakeD = null;
+        l.bakeL = null;
+    }
+
+    /** Recycles a bake this view built itself, one second later (a recorded display list may still draw it). */
+    private static void freeBake(Bitmap b) {
+        if (b != null) Halo.freeLater(b);
+    }
+
+    private static Bitmap composeMix(Bitmap d, float da, Bitmap l, float la) {
+        Bitmap b = Bitmap.createBitmap(d.getWidth(), d.getHeight(), Bitmap.Config.ARGB_8888);
+        Canvas c = new Canvas(b);
+        Paint p = new Paint();
+        p.setAlpha(Math.round(255f * da));
+        c.drawBitmap(d, 0f, 0f, p);
+        p.setAlpha(Math.round(255f * la));
+        c.drawBitmap(l, 0f, 0f, p);
+        return b;
     }
 
     private void applyFonts() {
@@ -327,8 +398,12 @@ public class TopShelfView extends View {
         for (Layer l : layers) l.dropBitmaps();
         flatGlow = null;
         shadowBmp = null;
+        freeBake(overlay);
+        freeBake(overlayL);
+        freeBake(overlayMix);
         overlay = null;
         overlayL = null;
+        overlayMix = null;
         if (mixAnim != null) { mixAnim.cancel(); mixAnim = null; darkA = tDarkA; lightA = tLightA; mixP = tMixP; }
         invalidate();
     }
@@ -494,8 +569,12 @@ public class TopShelfView extends View {
         } else {
             l.bleed.setShader(null);
         }
-        l.bakeD = null;                                                // the app (or its art) changed: rebuild whichever are visible
+        freeBake(l.bakeD);                                             // the app (or its art) changed: rebuild whichever are visible
+        freeBake(l.bakeL);
+        freeBake(l.bakeMix);
+        l.bakeD = null;
         l.bakeL = null;
+        l.bakeMix = null;
         ensureBakes(l);
 
         if (l.art != null) {
@@ -514,8 +593,10 @@ public class TopShelfView extends View {
     /** Builds the dark and / or light bake of a layer when its alpha can be above 0 (lazy; never in onDraw). */
     private void ensureBakes(Layer l) {
         if (l.e == null || vw <= 0 || vh <= 0 || fadeShader == null) return;
+        if (l.bakeMix != null && mixSettled()) return;                 // the settled pre-composite stands in for both
         if (l.bakeD == null && needDark()) l.bakeD = bakeFor(l, Theme.DARK);
         if (l.bakeL == null && needLight()) l.bakeL = bakeFor(l, Theme.LIGHT);
+        settleMix(l);
     }
 
     /**
@@ -551,6 +632,7 @@ public class TopShelfView extends View {
 
     private void ensureOverlays() {
         if (vw <= 0 || vh <= 0 || fadeShader == null) return;
+        if (overlayMix != null && mixSettled()) return;
         if (overlay == null && needDark()) overlay = buildOverlay(Theme.DARK);
         if (overlayL == null && needLight()) overlayL = buildOverlay(Theme.LIGHT);
     }
@@ -625,9 +707,14 @@ public class TopShelfView extends View {
     /** The two shared ALPHA_8 bitmaps (flat glow; contact + lift shadow), half resolution. */
     private void buildShared() {
         if (vw <= 0 || flatDst.isEmpty()) return;
+        freeBake(overlay);
+        freeBake(overlayL);
+        freeBake(overlayMix);
         overlay = null;
         overlayL = null;
+        overlayMix = null;
         ensureOverlays();
+        settleMix();
         float half = 0.5f;
         int fw = Math.max(1, Math.round(flatDst.width() * half)), fh = Math.max(1, Math.round(flatDst.height() * half));
         Bitmap fg = Bitmap.createBitmap(fw, fh, Bitmap.Config.ALPHA_8);
@@ -681,6 +768,10 @@ public class TopShelfView extends View {
         }
         if (a.e != null) {
             float wk = washK();
+            if (overlayMix != null) {
+                overlayP.setAlpha(Math.round(255f * wk));
+                c.drawBitmap(overlayMix, null, fullDst, overlayP);
+            }
             if (overlay != null && darkA > EPS) {
                 overlayP.setAlpha(Math.round(255f * darkA * wk));
                 c.drawBitmap(overlay, null, fullDst, overlayP);
@@ -704,6 +795,11 @@ public class TopShelfView extends View {
     private void backdrop(Canvas c, Layer l, float w) {
         if (l.e == null || w <= 0f) return;
         float wk = washK();
+        if (l.bakeMix != null) {
+            l.bakeP.setAlpha(Math.round(255f * w * wk));
+            c.drawBitmap(l.bakeMix, null, fullDst, l.bakeP);
+            return;
+        }
         if (l.bakeD != null && darkA > EPS) {
             l.bakeP.setAlpha(Math.round(255f * w * darkA * wk));
             c.drawBitmap(l.bakeD, null, fullDst, l.bakeP);

@@ -123,8 +123,7 @@ public class ClockFace extends View {
     private void compute() {
         Config cfg = new Config(FireTvBridge.settingsFile(getContext()));
         cfg.refresh();
-        int dbg = DebugFlags.timeMinute(cfg.get(DebugFlags.KEY_TIME, null));      // debug_time pins this clock too
-        long now = ClockFormat.pinnedMillis(System.currentTimeMillis(), dbg, java.util.TimeZone.getDefault());
+        long now = TimeSource.now(System.currentTimeMillis(), cfg.get(DebugFlags.KEY_TIME, null), java.util.TimeZone.getDefault());   // debug_time pins this clock too
         Calendar cal = Calendar.getInstance();
         cal.setTimeInMillis(now);
         String t = ClockFormat.hhmm(cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE));

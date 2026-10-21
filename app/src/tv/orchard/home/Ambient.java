@@ -160,7 +160,7 @@ public final class Ambient {
         if (dbgMinute >= 0) minute = dbgMinute;
         s.minute = minute;
         s.clockPinned = dbgMinute >= 0;
-        s.clockMs = ClockFormat.pinnedMillis(nowMs, dbgMinute, TimeZone.getDefault());   // the strip shows TV time
+        s.clockMs = TimeSource.now(nowMs, cfg.get(DebugFlags.KEY_TIME, null), TimeZone.getDefault());   // the strip shows TV time
 
         String dayKey = cityKey + "|" + s.year + "-" + s.month + "-" + s.day;
         if (!dayKey.equals(sunKey)) {
@@ -243,7 +243,7 @@ public final class Ambient {
         // TV-local strings.
         Calendar tv = Calendar.getInstance(TimeZone.getDefault());
         tv.setTimeInMillis(nowMs);
-        int tvMinute = dbgMinute >= 0 ? dbgMinute : tv.get(Calendar.HOUR_OF_DAY) * 60 + tv.get(Calendar.MINUTE);
+        int tvMinute = TimeSource.minute(tv.get(Calendar.HOUR_OF_DAY) * 60 + tv.get(Calendar.MINUTE), cfg.get(DebugFlags.KEY_TIME, null));
         s.greeting = Greeting.at(tvMinute);
         s.dateLabel = RainText.dateLabel(tv.get(Calendar.YEAR), tv.get(Calendar.MONTH) + 1, tv.get(Calendar.DAY_OF_MONTH));
         s.dreamLine = RainText.dreamLine(s.dateLabel, usable, s.wxTemp, s.raining, pct, likely, city.name);

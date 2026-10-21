@@ -171,12 +171,38 @@ public class SettingsActivity extends Activity {
         strip.resume();
         started = true;
         refreshSky();
+        ((OrchardApp) getApplication()).setSettingsScreenListener(this::onSettingsChangedLive);
+        tickHandler.removeCallbacks(minuteTick);
+        tickHandler.postDelayed(minuteTick, msToNextMinute());
+    }
+
+    private final android.os.Handler tickHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable minuteTick = this::onMinuteTick;      // a method ref: d8 8.2.2 crashes on an anonymous Runnable here
+
+    private void onMinuteTick() {
+        if (!started) return;
+        refreshSky();                                               // clock pin, greeting and sky follow the minute (and a cleared debug_time)
+        tickHandler.postDelayed(minuteTick, msToNextMinute());
+    }
+
+    private static long msToNextMinute() {
+        long now = System.currentTimeMillis();
+        return 60000L - (now % 60000L) + 50L;
+    }
+
+    /** debug_time (or another flag) changed through the broadcast channel while this screen is open. */
+    private void onSettingsChangedLive() {
+        if (!started) return;
+        config.refresh();
+        refreshSky();
     }
 
     @Override
     protected void onStop() {
         super.onStop();
         started = false;
+        tickHandler.removeCallbacks(minuteTick);
+        ((OrchardApp) getApplication()).setSettingsScreenListener(null);
         backdropGen++;
         dismissSaver();
         strip.pause();
@@ -189,6 +215,7 @@ public class SettingsActivity extends Activity {
     /** Re-evaluate the ambient state (theme, sky, city), repaint the colours and rebuild the backdrop slice. */
     private void refreshSky() {
         state = Ambient.get(this).evaluate(System.currentTimeMillis(), false);
+        strip.setClockPin(state.clockMs, state.clockPinned);       // debug_time pins this clock like the home strip
         applyColors();
         loadBackdrop();
     }
@@ -421,10 +448,10 @@ public class SettingsActivity extends Activity {
     }
 
     /** 'Sunset HH:MM' for the city today in its own zone; 'Polar' when the sun does not set (or rise). */
-    private static String sunsetDetail(double lat, double lon, String tzId) {
+    private String sunsetDetail(double lat, double lon, String tzId) {
         TimeZone tz = tzId != null ? TimeZone.getTimeZone(tzId) : TimeZone.getDefault();
         Calendar cal = Calendar.getInstance(tz);
-        cal.setTimeInMillis(System.currentTimeMillis());
+        cal.setTimeInMillis(TimeSource.now(System.currentTimeMillis(), config.get(DebugFlags.KEY_TIME, null), tz));
         int y = cal.get(Calendar.YEAR), m = cal.get(Calendar.MONTH) + 1, d = cal.get(Calendar.DAY_OF_MONTH);
         Calendar noon = Calendar.getInstance(tz);
         noon.clear();

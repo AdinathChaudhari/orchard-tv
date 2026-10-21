@@ -7,8 +7,8 @@ identifiers) is not published. Numbers below are from that log.
 ## Host tests
 
 `app/build.sh` compiles the pure-Java classes with `-Werror` and runs every `app/test/*Test.java` (plain `main()`
-asserts) before building. 23 test classes, all PASS on the final build. The build then produces a signed
-`orchard.apk` (1,465,712 bytes on the final build; budget 1.6 MB) and fails unless it declares exactly two permissions (`WRITE_SECURE_SETTINGS` and `INTERNET`, the latter for the optional weather request). `tests/launcher_cmd_test.sh` (24 checks on the `city` and `screensaver` commands) and `tests/detox_guard_test.sh` also pass.
+asserts) before building. 25 test classes, all PASS on the final build. The build then produces a signed
+`orchard.apk` (1,473,904 bytes on the final build; budget 1.6 MB) and fails unless it declares exactly two permissions (`WRITE_SECURE_SETTINGS` and `INTERNET`, the latter for the optional weather request). `tests/launcher_cmd_test.sh` (24 checks on the `city` and `screensaver` commands) and `tests/detox_guard_test.sh` also pass.
 
 Mutation checks were run on the first three test classes (redirect-list handling, crash window, config parsing):
 each deliberate bug in the code under test had to be caught. Two mutants survived the first round (crash-file
@@ -37,9 +37,25 @@ Run in two rounds on the same Stick, after checking that no real playback was ac
 | Memory | 84.7 MB PSS at the end of the session |
 | End state | Redirect entry present, accessibility on, grant present, crash guard armed, Home opens Orchard |
 
-The README sky, rain, tour, Quick Panel, Settings and clock images are real captures from this run, cropped, scaled and encoded only. The night Settings capture shows the real clock in its header, because Settings ignores `debug_time`.
+The README sky, rain, tour, Quick Panel, Settings and clock images are real captures from this run, cropped, scaled and encoded only. The night Settings capture shows the real clock in its header, because at the time Settings ignored `debug_time` (fixed on 2026-10-21, below).
 
-Open items: dock jank of 6-11 % at 18:10 under a spaced 10-key loop (0 % by the standard method; suspected per-frame shadow layer on stroked icons); foreground memory can pass 120 MB under repeated pinned-time switching, and any app round trip releases it to about 81-85 MB; Quick Panel overlaps the "Fire TV home active" pill when the redirect is off. ClockDream is the active Fire TV screensaver on the test Stick (set during overnight verification; `scripts/launcher.sh screensaver off` reverts).
+Open items at the time (all fixed on 2026-10-21, next section): dock jank of 6-11 % at 18:10 under a spaced 10-key loop (0 % by the standard method; suspected per-frame shadow layer on stroked icons); foreground memory can pass 120 MB under repeated pinned-time switching, and any app round trip releases it to about 81-85 MB; Quick Panel overlaps the "Fire TV home active" pill when the redirect is off. ClockDream is the active Fire TV screensaver on the test Stick (set during overnight verification; `scripts/launcher.sh screensaver off` reverts).
+
+## Open-items round on the Stick (2026-10-21)
+
+Run after checking that no real playback was active. Every check ran on the same final build that is installed on the Stick.
+
+| Item | Check | Result |
+|---|---|---|
+| Path halos | Stroked-icon halos are baked once into cached ALPHA_8 sprites keyed by (path, stroke width, radius), like the text halos; no per-frame shadow layer. Dock sweep at 18:10, 10 separate key presses about 0.4 s apart, three runs | 1.98 / 1.27 / 1.42 % janky (target under 10 %; 7.58 / 2.52 / 4.26 % before the last fix). At 12:00: 0.42 / 0 / 0.14 % |
+| Memory | `debug_time` 12:00, 18:10, 22:00, 06:00, three cycles, then six dock sweeps. Every bake cache is bounded and old bakes are recycled; GPU caches are trimmed 2.5 s after the last key | Cycles 87.5-90.0 MB, sweeps 95.3-101.5 MB PSS (limit 110), 92.8 MB 10 s later, 64.3 MB after an app round trip. The first build of the round reached 121.0 MB: the Top Shelf art cache held only 2 apps, so every key re-decoded a banner. Raising it to 8 apps (10 MB cap) fixed it |
+| Settings clock | Settings with `debug_time=22:00`, then a live clear | Showed 22:00, then the real time within 2 s. All clocks, dates and greetings now read one time source |
+| Quick Panel and pill | Redirect off, open the Quick Panel | The pill and the greeting hide while the panel is open; nothing overlaps |
+| Confirm sheet | "Turn Home redirect back on?" | The sheet fits its one-line text; no empty gap |
+| Tile label contrast | "Fire TV Home" label against the real pixels behind it, median and worst pixel | 06:00 5.43:1 (5.10), 12:00 6.83:1 (6.76), 18:10 4.91:1 (4.58), 22:00 5.84:1 (5.62); target 4.5:1 in every sky phase |
+| Regression | Home from Fire TV Settings, weather, rain, screensaver, starts, idle | Home opened Orchard 5/5 with real logos; live weather chip matched Open-Meteo; rain at 10:00 animates with 0 % janky frames; ClockDream still the screensaver; cold start 704-899 ms; 2 frames in 30 s idle (the minute tick); no crashes |
+| README images | `screenshot-real-home/shelf/grid.jpg` | Recaptured from this build with debug flags for 12:00, 18:10 and 22:00 (clear sky), converted to JPEG only, no crop or retouch |
+| End state | `launcher.sh status` | Redirect entry present, grant present, crash guard armed, ClockDream the screensaver, Home opens Orchard with real logos, debug flags cleared |
 
 ## Phases
 
@@ -91,3 +107,4 @@ All run with the Stick on Wi-Fi ADB and a snapshot taken first.
 3. After an adb reboot, Fire OS can show an "Unable to Detect Your Remote" dialog on top of any launcher. Dismiss it
    with `input keyevent 23`.
 4. Hold-key scrolling (hold RIGHT or DOWN for 3 s) can only be checked with a physical remote.
+5. At 06:00 and 18:10 the "Fire TV Home" tile label switches to dark ink but its house icon stays white (cosmetic).
