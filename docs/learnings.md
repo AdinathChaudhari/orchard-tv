@@ -63,6 +63,18 @@ Home on Fire source and the Mac toolchain directly.
 9. **Flipping `private_dns_mode` back is not enough; reconnect Wi-Fi.** In this incident validation was not retried after the settings change.
    Without `svc wifi disable; sleep 3; svc wifi enable` (run with `nohup` on the device so it survives the dropped adb link) the
    network stayed "broken" for over 10 minutes after the mode was already correct.
+   Automated by `DnsGuard` (see 2.10 and docs/DETOX.md).
+10. **Why the manual flip needs to happen early (read from the system's behaviour, not measured on a stale clock).** When strict
+   validation fails, the resolver's validation retry sleeps 60 s and doubles up to 3600 s. Switching to `opportunistic` makes that
+   thread exit at its next wake, so a recovery run about a minute after boot meets a 60-120 s backoff, while one 10+ minutes later
+   meets a long one (hence the Wi-Fi reconnect in 2.9). `DnsGuard` therefore starts from Orchard's first frame, and the
+   `hostname` write also resets Android's own network check backoff. After a repair, `VALIDATED` followed within seconds in the
+   simulated runs (docs/TESTING.md); the true stale-clock reproduction was not run.
+11. **The resolver cache trap: never probe a cacheable name.** Both the specifier name and `api.open-meteo.com` can be answered from
+   the per-network resolver cache, which gives a false "strict works". The probe is a random label under Android's own
+   `-dnsotls-ds.metric.gstatic.com` suffix: uncacheable by construction, and a successful lookup in strict mode means the private
+   DNS server validated. The suffix could not be confirmed in `dumpsys` on Fire OS 8.1 (no log line is kept), but the lookup
+   resolves, and fails with a deliberately broken specifier, which is what matters.
 
 ## 3. Home on Fire (read from its source; it is GPLv3, so never copy its code)
 

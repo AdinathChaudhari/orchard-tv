@@ -248,7 +248,10 @@ layer_dns() {
   echo "== dns ($DNS_HOST)"
   [[ $DNS_HOST =~ ^[A-Za-z0-9.-]+$ ]] || die "DNS_HOST looks wrong: $DNS_HOST"
   snapshot_if_missing
-  put_key global:private_dns_mode hostname
+  # DNS_MODE=opportunistic: the clock-immune alternative (docs/DETOX.md); default stays strict.
+  local mode=${DNS_MODE:-hostname}
+  case "$mode" in (hostname|opportunistic) ;; (*) die "DNS_MODE must be hostname or opportunistic: $mode" ;; esac
+  put_key global:private_dns_mode "$mode"
   put_key global:private_dns_specifier "$DNS_HOST"
 }
 

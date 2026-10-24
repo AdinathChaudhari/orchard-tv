@@ -29,6 +29,9 @@ public final class State implements DebugNonce.Store {
     /** In memory until commit(). */
     public void set(String key, String value) { conf.set(key, value); }
 
+    /** In memory until commit(). */
+    public void remove(String key) { conf.remove(key); }
+
     /** set() + commit() in one call. */
     @Override
     public void put(String key, String value) {

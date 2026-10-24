@@ -1023,6 +1023,7 @@ public class HomeActivity extends Activity {
         if (!bridge.hasGrant()) chip = "adb grant missing";
         else if (!bridge.redirectOn()) chip = "Fire TV home active";
         else if (bridge.redirectDoubtful()) chip = "Redirect may be off in Home on Fire";
+        else if (DnsGuard.get(this).notice() != null) chip = DnsGuard.get(this).notice();
         strip.setChip(chip);
     }
 
@@ -1119,6 +1120,7 @@ public class HomeActivity extends Activity {
 
     private void onAmbient(AmbientState s) {
         if (root == null || safe) return;
+        DnsGuard.get(this).onMinute(System.currentTimeMillis());   // real wall clock, not the pinned one
         if (OverlayRules.largePhaseJump(prevAmbientMinute, s.minute, PHASE_JUMP_MIN)) {
             // debug_time switch / clock set: the old phase's halo sprites and sky keyframes are dead weight; free them
             // now and collect once, so graphics memory does not climb across repeated jumps.
@@ -1253,6 +1255,7 @@ public class HomeActivity extends Activity {
     @Override
     protected void onStop() {
         super.onStop();
+        DnsGuard.get(this).noteWall();
         cancelMove();
         if (root == null || released) return;
         released = true;
@@ -1362,6 +1365,7 @@ public class HomeActivity extends Activity {
             ViewTreeObserver vto = view.getViewTreeObserver();
             if (vto.isAlive()) vto.removeOnDrawListener(this);
             state.clearBootAttempts();
+            DnsGuard.get(view.getContext()).onHomeVisible();   // schedules the first Private DNS check on the guard thread
         }
     }
 }

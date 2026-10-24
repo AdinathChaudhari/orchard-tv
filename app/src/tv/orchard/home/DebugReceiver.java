@@ -44,6 +44,10 @@ public final class DebugReceiver extends BroadcastReceiver {
             if (isOrderedBroadcast()) setResultData(d);
             return;
         }
+        if ("tv.orchard.home.DNS_GUARD".equals(action)) {
+            dnsGuard(context, intent);
+            return;
+        }
         int n = -1;
         try {
             Config cfg = new Config(FireTvBridge.settingsFile(context));
@@ -62,6 +66,34 @@ public final class DebugReceiver extends BroadcastReceiver {
             }
         }
         if (isOrderedBroadcast()) setResultData(Integer.toString(n));
+    }
+
+    /**
+     * DNS_GUARD --es cmd check|run|manual|status|reset [--es force 1]. check: one detection pass (result e.g. "skip:not_stale",
+     * "skip:mode=opportunistic", "armed:1", "run"); run: the same but starts a run on the first failed probe when force=1;
+     * status: "phase=..;retry=..;runs=..;result=..;ago=..;mode=..;specMatch=..;floorAgeMin=.."; reset: dnsg.* back to idle.
+     * The probe can take seconds, so check/run/reset finish on the guard thread through goAsync.
+     */
+    private void dnsGuard(Context context, Intent intent) {
+        String cmd = intent.getStringExtra("cmd");
+        boolean force = "1".equals(intent.getStringExtra("force"));
+        DnsGuard guard = DnsGuard.get(context);
+        if ("status".equals(cmd)) {
+            if (isOrderedBroadcast()) setResultData(guard.status());
+            return;
+        }
+        final PendingResult pr = isOrderedBroadcast() ? goAsync() : null;
+        DnsGuard.Done done = r -> {
+            if (pr != null) {
+                pr.setResultData(r);
+                pr.finish();
+            }
+        };
+        if ("check".equals(cmd)) guard.debugCheck(force, false, done);
+        else if ("run".equals(cmd)) guard.debugCheck(force, force, done);
+        else if ("manual".equals(cmd)) guard.debugManual(done);      // exactly what Settings > Private DNS status > select does
+        else if ("reset".equals(cmd)) guard.debugReset(done);
+        else done.done("error:cmd");
     }
 
     /** The app's shared Config (refreshed) when available, else a fresh one over orchard.conf. */

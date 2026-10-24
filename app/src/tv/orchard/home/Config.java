@@ -25,6 +25,7 @@ public final class Config {
         public static final String CLOCK_24H = "clock_24h";           // on | off
         public static final String WALLPAPER = "wallpaper";           // sky | dusk | ember | fog | black | user (default sky)
         public static final String THEME = "theme";                   // auto | light | dark (default auto)
+        public static final String DNS_GUARD = "dns_guard";           // on | off (default on): Private DNS repair (DnsGuard)
         public static final String WEATHER = "weather";               // on | off (default on)
         public static final String UNITS = "units";                   // auto | c | f (default auto)
         public static final String CITY_ID = "city_id";               // id from cities.csv (default bengaluru)
@@ -48,6 +49,9 @@ public final class Config {
         public static final String DEBUG_CARD = "debug_card";         // emblem | banner | off, overrides card (debug flag)
         public static final String DEBUG_MOTION = "debug_motion";     // reduced | full, overrides motion (debug flag)
         public static final String DEBUG_ART = "debug_art";           // placeholder = letter plates instead of real banners/icons (debug flag)
+        public static final String DEBUG_DNS_FAST = "debug_dns_fast";   // 1 = DnsGuard waits divided by 10 (shell channel only)
+        public static final String DEBUG_DNS_RESTORE_HOST = "debug_dns_restore_host"; // test-only restore target (shell channel only)
+        public static final String DEBUG_DNS_FORCE = "debug_dns_force";  // 1 = skip stale, cooldown and host gates on the next check (shell channel only)
         public static final String CRASH_ON_HOME = "crash_on_home";   // 1, R6c test flag
         // runtime state (state.conf in getFilesDir)
         public static final String SAFE_MODE = "safe_mode";           // 1 = show SafeModeView

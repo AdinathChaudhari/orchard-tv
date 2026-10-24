@@ -31,9 +31,12 @@ public final class DebugFlags {
     /**
      * Keys that arm crash behaviour (debug_crash enables the crash/hang extras, crash_on_home is the R6c flag).
      * They may only come from orchard.conf, never from this exported channel (set or clear).
+     * The three debug_dns_* keys are refused too: an app could otherwise aim DnsGuard's restore at its own DoT host.
      */
     private static boolean refused(String k) {
-        return k.equals(Config.Keys.DEBUG_CRASH) || k.equals(Config.Keys.CRASH_ON_HOME);
+        return k.equals(Config.Keys.DEBUG_CRASH) || k.equals(Config.Keys.CRASH_ON_HOME)
+            || k.equals(Config.Keys.DEBUG_DNS_RESTORE_HOST) || k.equals(Config.Keys.DEBUG_DNS_FAST)
+            || k.equals(Config.Keys.DEBUG_DNS_FORCE);
     }
 
     /** Applies clear (first) then spec ("k=v;k=v") to cfg and saves when anything changed. Returns the number of changes. */

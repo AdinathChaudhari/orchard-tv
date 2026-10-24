@@ -4,7 +4,10 @@
 
     <!-- Two permissions. WRITE_SECURE_SETTINGS is granted once from the Mac (scripts/launcher.sh grant).
          INTERNET is a normal install-time permission used only for one Open-Meteo forecast request
-         (https, at most every 30 min, none when Settings > Weather is off). -->
+         (https, at most every 30 min, none when Settings > Weather is off) and, only while the clock looks stale
+         after a power-off or a Private DNS repair is running, for DNS-only lookups of
+         <random>-dnsotls-ds.metric.gstatic.com, the name Android's own NetworkMonitor resolves on every network
+         check; nothing is ever sent to that host. -->
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
     <uses-permission android:name="android.permission.INTERNET" />
 

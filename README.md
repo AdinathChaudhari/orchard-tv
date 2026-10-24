@@ -132,7 +132,7 @@ The detox has seven layers, each runnable alone (`scripts/detox.sh <layer>`) and
 
 `config/never-disable.txt` (launcher, platform, input, SystemUI, Settings, providers, Bluetooth) is refused on every disable path, and the typed gates `DEBLOAT`, `UPDATES` and `DETOX` stop a stray run. `detox.sh status` is read-only.
 
-Fire OS ignores third-party Home apps, so Orchard cannot be chosen as the default launcher. [Home on Fire](https://github.com/toolicious/home-on-fire) (GPLv3, installed separately, never copied here) watches for Amazon's home opening through an accessibility service and redirects to Orchard. Orchard asks for two permissions: `WRITE_SECURE_SETTINGS`, which lets its own reset sheet switch that redirect off, and `INTERNET`, used only for the weather request below. The reset tools work in layers, so one failure never strands you:
+Fire OS ignores third-party Home apps, so Orchard cannot be chosen as the default launcher. [Home on Fire](https://github.com/toolicious/home-on-fire) (GPLv3, installed separately, never copied here) watches for Amazon's home opening through an accessibility service and redirects to Orchard. Orchard asks for two permissions: `WRITE_SECURE_SETTINGS`, which lets its own reset sheet switch that redirect off, and `INTERNET`, used only for the weather request below (and DNS-only lookups while Orchard repairs Private DNS after a power-off, see [docs/DETOX.md](docs/DETOX.md); switch it off in Settings > Repair Private DNS). The reset tools work in layers, so one failure never strands you:
 
 | Reset layer | Where | What it does |
 |---|---|---|
@@ -229,13 +229,13 @@ No. Those ads are stitched into the stream or served from the video's own domain
 Use Settings > Return to Fire TV in Orchard, long-press Home on the remote, or run `scripts/launcher.sh reset-to-stock`. `factory-stock` also restores the saved settings, re-enables the debloated packages and removes Orchard.
 
 **Does Orchard use the network?**
-One optional request: the weather chip asks Open-Meteo for the forecast at your city's coordinates, at most every 30 minutes, with nothing else attached. Settings > Weather off stops it. Nothing else leaves the TV.
+One optional request: the weather chip asks Open-Meteo for the forecast at your city's coordinates, at most every 30 minutes, with nothing else attached. Settings > Weather off stops it. Nothing else leaves the TV (plus DNS-only health lookups of the same test name Android itself uses, only while the clock looks stale after a power-off, while a Private DNS repair runs, or when you select Settings > Private DNS status; nothing is sent to it).
 
 **Where is the Amazon Appstore?**
 In the app grid by default; selecting it opens the store. If you hid it earlier, untick it in Settings > Hidden apps.
 
 **Amazon apps say "no internet" but Netflix works?**
-After a power-off the Stick's clock can restart far behind, which breaks strict Private DNS and blocks the time sync. See the [clock and certificate note](docs/DETOX.md#clock-and-certificate-strict-private-dns-can-lock-the-stick-out) for the recovery steps.
+After a power-off the Stick's clock can restart far behind, which breaks strict Private DNS and blocks the time sync. When Orchard opens after boot it detects this and starts a repair within about a minute (Settings > Repair Private DNS; untested on a real stale clock so far). Without Orchard, see the [clock and certificate note](docs/DETOX.md#clock-and-certificate-strict-private-dns-can-lock-the-stick-out) for the recovery steps.
 
 **Is the UI 4K or 1080p?**
 The Stick renders at 1920x1080 and scales to a 4K panel, so Orchard is laid out for 1080p.
