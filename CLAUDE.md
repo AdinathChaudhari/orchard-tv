@@ -12,7 +12,7 @@ tools to build it, install it and reset the Stick to Amazon's home. Public, MIT.
 - `scripts/` `detox.sh` (snapshot, privacy, screensaver, background, dns, debloat, updates, status, undo), `launcher.sh`
   (build, install, status, reset, `city`, `screensaver on|off`), `tv.sh` (one adb shell command).
 - `config/` `debloat.txt` (packages to disable), `never-disable.txt` (refused on every disable path).
-- `tests/` `detox_guard_test.sh` (host-only: guard refusals, list intersection, fake-TV end to end), `launcher_cmd_test.sh` (dry-run checks of `city` and `screensaver`).
+- `tests/` `detox_guard_test.sh` (host-only: guard refusals, list intersection, fake-TV end to end), `launcher_cmd_test.sh` (dry-run checks of `city` and `screensaver`, `status` against a fake TV).
 - `mockup/` HTML preview of the design. `real-art.js` must stay `false`; `banners-real/` is git-ignored and never committed.
 - `docs/` DETOX.md (the detox guide), PLAN.md (historical spec), TESTING.md (scrubbed results), learnings.md, research/.
 
@@ -73,6 +73,9 @@ After `install` the Stick shows the Amazon home; `install` ends by starting Orch
 - No `RenderEffect` on API 30: blur a small bitmap once. Full-width shaders are GPU-bound on the Stick; bake gradients to bitmaps.
 - Home on Fire is GPLv3: integrate through its public service id, never copy its code.
 - Keep tile art 325x195 RGB_565; stop idle animations after 20 s.
+- `settings put global ntp_server` does nothing on Fire OS 8 (Amazon's TimeService replaces Android's); a stale clock under strict Private DNS needs the recovery in docs/DETOX.md.
+- The Appstore opens only through the component override in `LaunchOverrides` (`com.amazon.venezia/.ade.ADEHomeActivity`); its LAUNCHER activity bounces to Amazon's home. An explicit hide still beats `HiddenRules.SYSTEM_ALLOW`.
+- macOS `/bin/bash` is 3.2: write `case` patterns with a leading `(` inside `$( ... )`, or avoid `case` there.
 - The signing key (`app/release.keystore`, `app/.keypass`) is git-ignored and irreplaceable for updates; never commit it.
 
 ## Public-repo rules

@@ -35,6 +35,19 @@
 
 Fire OS refuses to disable a few packages ("protected package"). `debloat` reports them and carries on; `background` restricts them instead.
 
+### Clock and certificate (strict Private DNS can lock the Stick out)
+
+A Fire TV Stick has no battery clock. After a power-off it restores the time it last saved, which is behind by however long the previous session ran. The resolver's TLS certificate has a "valid from" date. If the restored clock is earlier than that date (a resolver rotating its certificate can re-arm this), strict Private DNS (`private_dns_mode=hostname`) fails and the network never counts as validated.
+
+- **Symptoms:** Amazon apps (Appstore, the Fire TV YouTube app) say there is no internet; Netflix still plays; Settings shows Wi-Fi connected; Settings may report "Private DNS is broken"; the date on screen is days behind.
+- **Cause:** Fire OS only schedules a time sync after the network validates, and its time servers are DNS names. Validation needs a correct clock, and the clock needs validation.
+- **Recovery** (about 2 minutes, from a Mac, with `scripts/tv.sh`):
+  1. `scripts/tv.sh 'settings put global private_dns_mode opportunistic'`, then wait about 30 seconds for the clock to sync.
+  2. `scripts/tv.sh 'settings put global private_dns_mode hostname'`.
+  3. Reconnect Wi-Fi so the network re-validates: `scripts/tv.sh 'nohup sh -c "svc wifi disable; sleep 3; svc wifi enable" >/dev/null 2>&1 &'`. Flipping the mode back without the reconnect left it "broken" for over 10 minutes.
+- **`settings put global ntp_server <ip>` does nothing on Fire OS 8.** Amazon's own time service replaces Android's, and it never reads that setting.
+- **Open choice (not decided):** (1) plain AdGuard DNS on the router and Private DNS off or opportunistic on the Stick (no lockout, but the filter is no longer enforced if the resolver is unreachable); (2) a watchdog in Orchard that runs this recovery by itself (design only, untested); (3) keep strict mode and recover by hand when it happens.
+
 ## Safety rules
 
 - **Never-disable list.** [`config/never-disable.txt`](../config/never-disable.txt) (launcher, platform, input, SystemUI, Settings, providers, shell, Bluetooth, plus Orchard and Home on Fire) is checked on every disable path. A package on it is refused even if you add it to `debloat.txt`. `scripts/detox.sh guard <pkg>` tests one name without touching the TV, and `tests/detox_guard_test.sh` proves the refusal.

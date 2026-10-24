@@ -24,6 +24,9 @@ public final class HiddenRulesTest {
         is("allow-listed YouTube shown", false, HiddenRules.isHidden("com.amazon.firetv.youtube", sys, none, none));
         is("allow-listed firebat shown", false, HiddenRules.isHidden("com.amazon.firebat", HiddenRules.FLAG_SYSTEM | HiddenRules.FLAG_UPDATED_SYSTEM_APP, none, none));
         is("allow-listed updated Prime Video shown", false, HiddenRules.isHidden("com.amazon.avod", sysUpd, none, none));
+        is("allow-listed Appstore shown", false, HiddenRules.isHidden("com.amazon.venezia", sys, none, none));
+        Set<String> hidStore = new HashSet<String>(Collections.singleton("com.amazon.venezia"));
+        is("user-hidden Appstore hidden", true, HiddenRules.isHidden("com.amazon.venezia", sys, hidStore, none));
         Set<String> shown = new HashSet<String>(Collections.singleton("com.amazon.dcp"));
         is("user-unhidden system app shown", false, HiddenRules.isHidden("com.amazon.dcp", sys, none, shown));
         Set<String> hid = new HashSet<String>(Collections.singleton("com.netflix.ninja"));
