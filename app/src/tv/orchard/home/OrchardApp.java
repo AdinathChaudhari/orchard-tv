@@ -20,6 +20,7 @@ public class OrchardApp extends Application {
         // boot_attempts++ lives in HomeActivity.onCreate (PLAN 2.2): dream binds / receiver-only starts are not launches.
         CrashGuard.install(state.crashesFile(), FireTvBridge.crashListener(this));
         art = new ArtCache(this);
+        DnsGuard.get(this).resume();                 // reads state.conf; starts a worker only for a persisted run
     }
 
     public State state() { return state; }

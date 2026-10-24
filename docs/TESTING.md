@@ -66,7 +66,53 @@ Run after checking that no real playback was active. Every check ran on the same
 | Device: Appstore tile | Select on the tile | Opens `com.amazon.venezia/.ade.ADEHomeActivity` (the old chain bounced to Amazon's home) |
 | Not covered by a host test | Fallback when the override does not resolve | Reviewed only |
 | Not verified | Home pressed from the Appstore returns to Orchard | Home on Fire's redirect was off on the Stick, so it could not be checked |
-| Clock incident | After a power-off the clock was about 14 days behind and strict Private DNS blocked time sync | Recovered with the steps in [DETOX.md](DETOX.md#clock-and-certificate-strict-private-dns-can-lock-the-stick-out); Orchard was not involved. Permanent fix still open |
+| Clock incident | After a power-off the clock was about 14 days behind and strict Private DNS blocked time sync | Recovered with the steps in [DETOX.md](DETOX.md#clock-and-certificate-strict-private-dns-can-lock-the-stick-out); Orchard was not involved. Permanent fix: DnsGuard, see the next section |
+
+## Private DNS repair (DnsGuard, 2026-10-24)
+
+Host: `DnsGuardPolicyTest` (floor/stale, clock-sync, gate order and bypass rules, every row of the phase table, four
+simulated paths with a fake clock, resume) and the `DebugFlagsTest` additions pass. Mutation check, each run through
+`app/build.sh`, each made the host-test stage FAIL, and the unmutated control passed afterwards (20 of 20 killed):
+stale `<` to `<=`; stale margin dropped; far-future floor guard removed; clock-synced `||` to `&&`; forced bypassing the run cap;
+run cap off by one; mode gate removed; specifier gate removed; as-written check without the specifier compare; as-written check
+without the mode compare; fallback writing `off`; no-network path falling back; retry unbounded; confirm boundary off by one;
+nudge repeated; off dwell skipped; resume restoring `opportunistic` instead of `hostname`; resume still writing after a user
+change; `final` writing `off`; the three `debug_dns_*` keys removed from the exported channel's refusal list.
+APK 1.49 MB, permissions unchanged (`INTERNET`, `WRITE_SECURE_SETTINGS`).
+
+Device (Fire TV Stick 4K Plus, Fire OS 8.1), strict mode broken on purpose by pointing the specifier at a name whose certificate
+does not match (the same verification step a date failure trips), then a forced run:
+
+| Case | Result |
+|---|---|
+| Healthy, no false positive | check `skip:not_stale`; forced check `probe=ok`; no settings write |
+| Simulated lockout, happy path | opportunistic, off, hostname: exactly 3 writes, result `ok` in 11 s, network `VALIDATED` at the next 10 s poll (lag between "ok" and validated is under 10 s in the simulation, which changes the specifier and so cannot reproduce netd's sleeping same-server validation; the true stale-clock reproduction decides whether `ACCESS_NETWORK_STATE` is ever needed) |
+| Fallback path (fast timings) | strict never came back: fallback to `opportunistic` (4 writes), retry once, `final` on `opportunistic` (7 writes); `VALIDATED` under `opportunistic`; settings restored by hand afterwards |
+| `force-stop` mid-run | next start logs a resume at phase `opp`, run continues, ends `ok` with the user's setting back (a shell cannot `kill -9` the app, so `am force-stop` stood in) |
+| Setting changed by hand during a run | run ends `aborted_user`, no further write |
+| Mode `off`, mode `opportunistic` | forced check skips, nothing written |
+| Time to `VALIDATED` after fixing a broken specifier | specifier write alone: about 3 s; `off`, 3 s, `hostname`: under 2 s. A specifier change is a different resolver key, so this cannot reproduce the same-server sleeping validation thread; only a real stale clock can |
+
+Not run (user gates, left for the owner): moving the clock back with `cmd alarm set-time` (the true lockout reproduction) and a
+cold power-cycle. The post-boot path is covered by the host resume tests only. With the Home redirect off Orchard may never
+run after boot, so nothing repairs in that case.
+
+### DnsGuard follow-ups (manual check, caps, known specifier)
+
+Host: new `DnsGuardPolicyTest` cases for a manual check out of `fallback`/`final` (repair when the settings are as the guard wrote
+them, `aborted_user` when they are not, run and write caps kept, mode must be `opportunistic`), a manual check needing
+`ARM_COUNT` failed probes, the detection cap and the per-boot counter key list, `known_spec` recording rules, and the Home
+notice staying silent on `hostname`. Mutation check, each made the host-test stage FAIL (13 of 13 killed, control green after):
+repair/abort inverted; only `final` counted as paused; manual not required; manual-bypass without the manual flag; paused
+repair mode gate removed; paused repair still gated on the specifier; one failed probe starting a run; detection cap off by one;
+detect probes and detect posts each dropped from the per-boot roll; forced checks recording `known_spec`; unexpected specifier
+recorded; notice ignoring the mode.
+
+Device (same Stick, fast timings): forced simulated lockout ended `ok` after 3 writes; a manual check while paused with
+`hostname` restored by hand returned `idle:aborted_user`; a manual check while paused with the settings as the guard wrote them ran
+one repair from `final` and ended `ok` (a test restore target stood in for the deliberately bad saved specifier). End state:
+`hostname`, `dns.adguard-dns.com`, network `VALIDATED`, Home on Fire redirect present, Orchard in front, debug state cleared.
+
 
 ## Phases
 

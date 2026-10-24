@@ -354,6 +354,12 @@ public class SettingsActivity extends Activity {
         out.add(SettingsList.toggle("Weather", () -> config.getBool(Config.Keys.WEATHER, true),
             v -> commit(Config.Keys.WEATHER, v ? "on" : "off")));
 
+        final DnsGuard guard = DnsGuard.get(this);
+        out.add(SettingsList.toggle("Repair Private DNS", () -> config.getBool(Config.Keys.DNS_GUARD, true),
+            v -> commit(Config.Keys.DNS_GUARD, v ? "on" : "off"))
+            .hint("After a power-off, brings ad-blocking Private DNS back when a stale clock breaks it. A repair uses the router's DNS for about a minute."));
+        out.add(SettingsList.action("Private DNS status", guard.statusLine(), () -> guard.requestCheck(true)));
+
         CityCommand.Resolved city = Cities.current(this, config);
         String cc = city.cc != null ? city.cc : Locale.getDefault().getCountry();
         String auto = RainText.useF("auto", cc) ? "Auto (\u00b0F)" : "Auto (\u00b0C)";

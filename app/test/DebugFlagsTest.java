@@ -72,6 +72,20 @@ public final class DebugFlagsTest {
             eq("shell no-op", "0", String.valueOf(DebugFlags.applyShell(su, null, null)));
             // the exported channel still refuses all three
             eq("exported still refuses crashguard_strip", "0", String.valueOf(DebugFlags.apply(su, "crashguard_strip=on", false)));
+            // DnsGuard test keys: the exported channel drops all three (set and clear), the shell channel keeps them
+            File f4 = new File(Files.createTempDirectory("orchard-dbg4").toFile(), "orchard.conf");
+            Config d = new Config(f4);
+            eq("exported refuses the three debug_dns keys", "0", String.valueOf(DebugFlags.apply(d,
+                "debug_dns_restore_host=evil.example;debug_dns_fast=1;debug_dns_force=1", false)));
+            eq("none of them persisted", null, new Config(f4).get("debug_dns_restore_host", null));
+            eq("shell accepts the three debug_dns keys", "3", String.valueOf(DebugFlags.applyShell(d,
+                "debug_dns_restore_host=dns.adguard-dns.com;debug_dns_fast=1;debug_dns_force=1", null)));
+            Config dr = new Config(f4);
+            eq("shell debug_dns_restore_host", "dns.adguard-dns.com", dr.get("debug_dns_restore_host", null));
+            eq("shell debug_dns_fast", "1", dr.get("debug_dns_fast", null));
+            eq("exported clear keeps them", "0", String.valueOf(DebugFlags.apply(dr, null, true)));
+            eq("still there after the exported clear", "1", new Config(f4).get("debug_dns_force", null));
+            eq("shell unsets them", "3", String.valueOf(DebugFlags.applyShell(dr, null, "debug_dns_restore_host;debug_dns_fast;debug_dns_force")));
             // debug_art=placeholder: logo-free letter plates, settable over both channels, cleared by debug_clear
             File f3 = new File(Files.createTempDirectory("orchard-dbg3").toFile(), "orchard.conf");
             Config a = new Config(f3);
