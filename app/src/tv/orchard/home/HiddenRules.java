@@ -17,9 +17,9 @@ public final class HiddenRules {
     public static final int FLAG_SYSTEM = 1;
     public static final int FLAG_UPDATED_SYSTEM_APP = 1 << 7;
 
-    /** System apps worth showing by default (YouTube; Prime Video is com.amazon.firebat on the Stick 4K Plus, avod on older models). */
+    /** System apps worth showing by default (YouTube; Prime Video is com.amazon.firebat on the Stick 4K Plus, avod on older models; the Amazon Appstore). */
     public static final Set<String> SYSTEM_ALLOW = new HashSet<String>(Arrays.asList(
-            "com.amazon.firetv.youtube", "com.amazon.avod", "com.amazon.firebat"));
+            "com.amazon.firetv.youtube", "com.amazon.avod", "com.amazon.firebat", "com.amazon.venezia"));
 
     public static boolean isUserApp(int appFlags) { return (appFlags & FLAG_SYSTEM) == 0; }
 

@@ -21,12 +21,13 @@ case "$1" in
   "am broadcast"*) echo "Broadcast completed: result=0, data=\"${FAKE_DATA-1}\"" ;;
   "dumpsys deviceidle whitelist") echo ",tv.orchard.home," ;;
   "cmd package resolve-activity"*) echo x ;;
+  "dumpsys package "*) printf '%s\n' "${FAKE_PERM-x}" ;;
   *) echo x ;;
 esac
 FAKE
 chmod +x "$T/faketv.sh"
 
-reset() { : >"$T/log"; rm -f "$T"/state/* "$T/snap.txt"; unset FAKE_SERVICES FAKE_DATA; }
+reset() { : >"$T/log"; rm -f "$T"/state/* "$T/snap.txt"; unset FAKE_SERVICES FAKE_DATA FAKE_PERM; }
 run() { out=$("$@" 2>&1); rc=$?; }   # sets $out, $rc
 logged() { grep -q -- "$1" "$T/log"; }
 mksnap() { printf 'date=x\nsecure.screensaver_components=%s\nsecure.screensaver_enabled=%s\n' "$1" "$2" >"$T/snap.txt"; }
@@ -123,6 +124,11 @@ if [ "$rc" != 0 ] && [ ! -s "$T/log" ]; then ok "city (no name) --dry-run: dies,
 reset
 run "$L" status
 if [[ $out == *'uses-permission'* ]] && [[ $out == *'screensaver_enabled'* ]] && [[ $out == *'orchard city'* ]]; then ok "status prints new lines"; else bad "status (rc=$rc $out)"; fi
+if [[ $out == *'WRITE_SECURE_SETTINGS granted no, INTERNET requested no'* ]]; then ok "status: no permissions -> no, no"; else bad "status perms none ($out)"; fi
+reset; export FAKE_PERM='android.permission.INTERNET: granted=true
+android.permission.WRITE_SECURE_SETTINGS: granted=true'
+run "$L" status
+if [[ $out == *'WRITE_SECURE_SETTINGS granted yes, INTERNET requested yes'* ]] && [[ $out != *'syntax error'* ]]; then ok "status: permissions -> yes, yes"; else bad "status perms ($out)"; fi
 
 # ---- syntax + sibling test
 bash -n "$L" && ok "bash -n launcher.sh" || bad "bash -n launcher.sh"

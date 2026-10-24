@@ -51,6 +51,18 @@ Home on Fire source and the Mac toolchain directly.
    cleared by a first frame. Three of those in a row made the next Home press look like a crash loop and stripped
    Home on Fire with no crash at all. The increment now runs in `HomeActivity.onCreate` (Application-stage
    crashes are still caught by the crashes-file window).
+7. **Fire OS has no battery clock; Amazon's TimeService restores a saved time at boot.** `com.amazon.fireos.service.timeservice`
+   (in `fosservices.jar`, runs in `system_server`) logs "Clock is untrusted: Was set to previously saved time on boot" and writes
+   `persist.sys.saved_time` only after a successful sync, so after a power-off the clock is stale by the previous boot's uptime
+   (seen: about 14 days). It schedules a sync only after "Network Validated", and its hosts are DNS names (an NTP pool name, an
+   HTTP-Date fallback name). With strict Private DNS and a clock before the resolver certificate's notBefore, the TLS handshake
+   fails, the network never validates, and the sync never runs. Amazon apps then report no internet while Netflix still plays.
+   Fix: `private_dns_mode=opportunistic`, wait about 30 s, back to `hostname`, then reconnect Wi-Fi (see docs/DETOX.md).
+8. **`settings put global ntp_server` is ignored.** The AOSP `NetworkTimeUpdateService` does not exist on Fire OS 8 (no such
+   service; `fosservices` never mentions `ntp_server`).
+9. **Flipping `private_dns_mode` back is not enough; reconnect Wi-Fi.** In this incident validation was not retried after the settings change.
+   Without `svc wifi disable; sleep 3; svc wifi enable` (run with `nohup` on the device so it survives the dropped adb link) the
+   network stayed "broken" for over 10 minutes after the mode was already correct.
 
 ## 3. Home on Fire (read from its source; it is GPLv3, so never copy its code)
 
@@ -189,3 +201,10 @@ Home on Fire source and the Mac toolchain directly.
     it, picks the ink and then the smallest veil to `Contrast.SAMPLED` (5.4, AA plus sampling margin; 4.8 still read 4.15-4.68:1 on the TV at 18:10). `HomeActivity.onSlice` feeds
     the tile. Host test `ContrastTest` sweeps coarse RGB skies through both themes and proves the old token backdrop picks an ink
     that fails on a horizon sky. Verify by measuring label pixels on the TV at 06:00, 12:00, 18:10, 22:00 (>= 4.5:1 each).
+16. **The Appstore's only LAUNCHER activity bounces to Amazon's home.** `com.amazon.venezia/.grid.AppsGridLauncherActivity` starts
+    `HomeActivity_vNext`, which Home on Fire redirects straight back to Orchard, so the tile never opened the store. Start
+    `com.amazon.venezia/.ade.ADEHomeActivity` instead (`LaunchOverrides` maps the package to it; `AppCatalog.launchIntent` uses it
+    only when `resolveActivity()` finds it, else the old leanback, launcher, MAIN chain). Verified: Select opens that activity.
+    Not verified: Home pressed from the store returning to Orchard (the redirect was off on the test Stick).
+17. **An explicit hide beats `SYSTEM_ALLOW`.** `HiddenRules.SYSTEM_ALLOW` now includes `com.amazon.venezia`, so new installs show
+    the Appstore. A saved config that already hides it keeps it hidden by design; untick it in Settings > Hidden apps.

@@ -230,17 +230,26 @@ public final class AppCatalog {
         return c != 0 ? c : BY_LABEL.compare(a, b);
     };
 
-    /** Leanback launch intent, else the normal one, else an explicit MAIN component. May return null. */
+    /** LaunchOverrides component when it resolves, else leanback launch intent, else the normal one, else an explicit MAIN component. May return null. */
     public Intent launchIntent(AppEntry e) {
         if (e == null) return null;
         PackageManager pm = ctx.getPackageManager();
-        Intent i = pm.getLeanbackLaunchIntentForPackage(e.packageName);
+        Intent i = overrideIntent(pm, e.packageName);
+        if (i == null) i = pm.getLeanbackLaunchIntentForPackage(e.packageName);
         if (i == null) i = pm.getLaunchIntentForPackage(e.packageName);
         if (i == null && e.component != null) {
             i = new Intent(Intent.ACTION_MAIN).setComponent(e.component);
         }
         if (i != null) i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
         return i;
+    }
+
+    /** Explicit intent for a LaunchOverrides package, or null (no override, or the component no longer resolves). */
+    private static Intent overrideIntent(PackageManager pm, String pkg) {
+        String cls = LaunchOverrides.activityFor(pkg);
+        if (cls == null) return null;
+        Intent i = new Intent(Intent.ACTION_MAIN).setComponent(new ComponentName(pkg, cls));
+        return i.resolveActivity(pm) != null ? i : null;
     }
 
     /**

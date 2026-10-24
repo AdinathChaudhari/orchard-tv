@@ -231,6 +231,12 @@ Use Settings > Return to Fire TV in Orchard, long-press Home on the remote, or r
 **Does Orchard use the network?**
 One optional request: the weather chip asks Open-Meteo for the forecast at your city's coordinates, at most every 30 minutes, with nothing else attached. Settings > Weather off stops it. Nothing else leaves the TV.
 
+**Where is the Amazon Appstore?**
+In the app grid by default; selecting it opens the store. If you hid it earlier, untick it in Settings > Hidden apps.
+
+**Amazon apps say "no internet" but Netflix works?**
+After a power-off the Stick's clock can restart far behind, which breaks strict Private DNS and blocks the time sync. See the [clock and certificate note](docs/DETOX.md#clock-and-certificate-strict-private-dns-can-lock-the-stick-out) for the recovery steps.
+
 **Is the UI 4K or 1080p?**
 The Stick renders at 1920x1080 and scales to a 4K panel, so Orchard is laid out for 1080p.
 

@@ -57,6 +57,17 @@ Run after checking that no real playback was active. Every check ran on the same
 | README images | `screenshot-real-home/shelf/grid.jpg` | Recaptured from this build with debug flags for 12:00, 18:10 and 22:00 (clear sky), converted to JPEG only, no crop or retouch |
 | End state | `launcher.sh status` | Redirect entry present, grant present, crash guard armed, ClockDream the screensaver, Home opens Orchard with real logos, debug flags cleared |
 
+## Appstore tile and clock incident (2026-10-24)
+
+| Item | Check | Result |
+|---|---|---|
+| Host tests | `app/build.sh`, with `LaunchOverridesTest` and the new `HiddenRulesTest` lines | PASS |
+| Mutation checks | Removed the Appstore override entry; removed `com.amazon.venezia` from `SYSTEM_ALLOW` | Each made its test fail; restored, PASS |
+| Device: Appstore tile | Select on the tile | Opens `com.amazon.venezia/.ade.ADEHomeActivity` (the old chain bounced to Amazon's home) |
+| Not covered by a host test | Fallback when the override does not resolve | Reviewed only |
+| Not verified | Home pressed from the Appstore returns to Orchard | Home on Fire's redirect was off on the Stick, so it could not be checked |
+| Clock incident | After a power-off the clock was about 14 days behind and strict Private DNS blocked time sync | Recovered with the steps in [DETOX.md](DETOX.md#clock-and-certificate-strict-private-dns-can-lock-the-stick-out); Orchard was not involved. Permanent fix still open |
+
 ## Phases
 
 | Phase | Host | On the TV |

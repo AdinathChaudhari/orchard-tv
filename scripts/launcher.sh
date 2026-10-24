@@ -206,7 +206,7 @@ cmd_snapshot() {
 
 # READ-ONLY: settings get, dumpsys, pm path, cmd package resolve-activity, cat. Nothing here writes.
 cmd_status() {
-  local cur perm home want flags p
+  local cur perm perm_w perm_i home want flags p
   cur=$(tv_get 'settings get secure enabled_accessibility_services') || exit 1
   printf 'enabled_accessibility_services = %s\n' "$cur"
   printf 'accessibility_enabled          = %s\n' "$(tv_get 'settings get secure accessibility_enabled')"
@@ -216,9 +216,10 @@ cmd_status() {
   case "$perm" in *granted=true*) printf 'WRITE_SECURE_SETTINGS grant    = yes\n' ;;
                   *) printf 'WRITE_SECURE_SETTINGS grant    = no\n' ;; esac
   perm=$(tv_read "dumpsys package $PKG" | grep -E 'android.permission.(WRITE_SECURE_SETTINGS|INTERNET)' || true)
+  case "$perm" in *WRITE_SECURE_SETTINGS*granted=true*) perm_w=yes ;; *) perm_w=no ;; esac
+  case "$perm" in *android.permission.INTERNET*) perm_i=yes ;; *) perm_i=no ;; esac
   printf 'uses-permission                = WRITE_SECURE_SETTINGS granted %s, INTERNET requested %s\n' \
-    "$(case "$perm" in *WRITE_SECURE_SETTINGS*granted=true*) echo yes ;; *) echo no ;; esac)" \
-    "$(case "$perm" in *android.permission.INTERNET*) echo yes ;; *) echo no ;; esac)"
+    "$perm_w" "$perm_i"
   printf 'screensaver_components         = %s\n' "$(tv_get 'settings get secure screensaver_components')"
   printf 'screensaver_enabled            = %s\n' "$(tv_get 'settings get secure screensaver_enabled')"
   printf 'orchard city                   = %s\n' "$(get_city)"
